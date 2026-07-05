@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import {
-  GitBranch, Check, X, Bell, Wifi, Zap, AlertCircle, Bot, Code2,
+  GitBranch, Check, X, Bell, Wifi, WifiOff, Zap, AlertCircle, Bot, Code2,
   type LucideIcon,
 } from 'lucide-react'
 import { useEditorStore } from '@/store/editor-store'
@@ -18,6 +18,7 @@ export function StatusBar({
   const activeTabId = useEditorStore(s => s.activeTabId)
   const openTabs = useEditorStore(s => s.openTabs)
   const files = useEditorStore(s => s.files)
+  const settings = useEditorStore(s => s.settings)
   const setSettingsOpen = useEditorStore(s => s.setSettingsOpen)
   const setBottomPanel = useEditorStore(s => s.setBottomPanel)
   const bottomPanel = useEditorStore(s => s.bottomPanel)
@@ -26,7 +27,7 @@ export function StatusBar({
   const aiQuickCodeOpen = useEditorStore(s => s.aiQuickCodeOpen)
   const setAiQuickCodeOpen = useEditorStore(s => s.setAiQuickCodeOpen)
   const [selection, setSelection] = useState<{ lines: number; chars: number } | null>(null)
-  const [errors, setErrors] = useState<{ errors: number; warnings: number }>({ errors: 0, warnings: 0 })
+  const [isOnline, setIsOnline] = useState(true)
 
   const activeTab = openTabs.find(t => t.id === activeTabId)
   const activeFile = activeTab ? files[activeTab.fileId] : null
@@ -34,11 +35,46 @@ export function StatusBar({
   // Count total files in project
   const totalFiles = Object.values(files).filter(f => f.type === 'file').length
 
+  // Track real online/offline status (was previously just a static icon)
+  useEffect(() => {
+    const update = () => setIsOnline(navigator.onLine)
+    update()
+    window.addEventListener('online', update)
+    window.addEventListener('offline', update)
+    return () => {
+      window.removeEventListener('online', update)
+      window.removeEventListener('offline', update)
+    }
+  }, [])
+
+  // Track Monaco editor selection (was previously always null — now reflects real selection)
+  useEffect(() => {
+    const update = () => {
+      const editors = (window as any).monaco?.editor?.getEditors?.() || []
+      if (editors.length === 0) {
+        setSelection(null)
+        return
+      }
+      const ed = editors[0]
+      const sel = ed.getSelection()
+      if (sel && !sel.isEmpty()) {
+        const chars = ed.getModel()?.getValueInRange(sel)?.length ?? 0
+        const lines = sel.endLineNumber - sel.startLineNumber + 1
+        setSelection({ lines, chars })
+      } else {
+        setSelection(null)
+      }
+    }
+    // Poll every 300ms — cheap & avoids binding to internal Monaco events
+    const id = setInterval(update, 300)
+    return () => clearInterval(id)
+  }, [activeTabId])
+
   return (
     <div className="flex h-6 items-center justify-between border-t border-[var(--editor-border)] bg-[var(--title-bar-bg)] px-2 text-xs text-muted-foreground">
       {/* Left side */}
       <div className="flex items-center gap-1">
-        <button className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--list-hover)]">
+        <button className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--list-hover)]" title="Branch">
           <GitBranch className="h-3.5 w-3.5" />
           <span>main</span>
         </button>
@@ -48,6 +84,7 @@ export function StatusBar({
             'flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--list-hover)]',
             bottomPanel === 'problems' && 'bg-[var(--list-hover)]'
           )}
+          title="Problems"
         >
           <X className="h-3.5 w-3.5" />
           <span>0</span>
@@ -59,8 +96,8 @@ export function StatusBar({
       {/* Right side */}
       <div className="flex items-center gap-1">
         {selection && (
-          <span className="px-1.5 py-0.5">
-            Ln {cursorPos.line}, Col {cursorPos.column} ({selection.lines} selected)
+          <span className="px-1.5 py-0.5" title={`${selection.chars} karakter terpilih`}>
+            {selection.lines > 1 ? `${selection.lines} baris · ${selection.chars} chars` : `${selection.chars} chars`} terpilih
           </span>
         )}
         {!selection && activeFile && (
@@ -69,20 +106,24 @@ export function StatusBar({
           </span>
         )}
 
-        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]">
-          <span>Spaces: 2</span>
+        {/* Reflect settings.tabSize (was previously hardcoded to "Spaces: 2") */}
+        <button
+          className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]"
+          title="Indentation"
+        >
+          <span>Spaces: {settings.tabSize}</span>
         </button>
 
-        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]">
+        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]" title="Encoding">
           <span>UTF-8</span>
         </button>
 
-        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]">
+        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]" title="Line Ending">
           <span>LF</span>
         </button>
 
         {activeFile && (
-          <button className="px-1.5 py-0.5 capitalize hover:bg-[var(--list-hover)]">
+          <button className="px-1.5 py-0.5 capitalize hover:bg-[var(--list-hover)]" title="Language">
             {language}
           </button>
         )}
@@ -114,15 +155,19 @@ export function StatusBar({
           <span className="hidden sm:inline">Quick</span>
         </button>
 
-        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]">
+        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]" title="File count">
           <span className="hidden md:inline">{totalFiles} files</span>
         </button>
 
-        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]">
-          <Wifi className="h-3.5 w-3.5" />
+        {/* Real online/offline status (was previously just a static Wifi icon) */}
+        <button
+          className={cn('flex items-center gap-1 px-1.5 py-0.5', isOnline ? 'text-foreground' : 'text-red-400')}
+          title={isOnline ? 'Online' : 'Offline — AI & deploy tidak akan jalan'}
+        >
+          {isOnline ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
         </button>
 
-        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]">
+        <button className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--list-hover)]" title="Notifications">
           <Bell className="h-3.5 w-3.5" />
         </button>
       </div>

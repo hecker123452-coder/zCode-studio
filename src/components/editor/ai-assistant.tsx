@@ -92,6 +92,8 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
   const replyRef = useRef<string>('')
   // Track the current AbortController so we can cancel on unmount / new chat / new message
   const abortRef = useRef<AbortController | null>(null)
+  // Track the abort timeout so we can clear it in finally (was previously leaked on error path)
+  const abortTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
 
   const activeTabId = useEditorStore(s => s.activeTabId)
@@ -162,6 +164,10 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       try { abortRef.current.abort() } catch { /* already aborted — ignore */ }
       abortRef.current = null
     }
+    if (abortTimeoutRef.current) {
+      clearTimeout(abortTimeoutRef.current)
+      abortTimeoutRef.current = null
+    }
     if (readerRef.current) {
       try { readerRef.current.cancel() } catch { /* stream already closed — ignore */ }
       readerRef.current = null
@@ -205,7 +211,9 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       // Stream request — real-time progress
       const controller = new AbortController()
       abortRef.current = controller
-      const timeoutId = setTimeout(() => controller.abort(), 120000)
+      // Track timeout in a ref so the finally block can always clear it (was previously leaked on error path)
+      abortTimeoutRef.current = setTimeout(() => controller.abort(), 120000)
+      const timeoutId = abortTimeoutRef.current
 
       let response: Response
       try {
@@ -225,7 +233,6 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
           signal: controller.signal,
         })
       } catch (fetchErr: any) {
-        clearTimeout(timeoutId)
         if (fetchErr.name === 'AbortError') throw new Error('TIMEOUT')
         throw new Error('CONNECTION')
       }
@@ -268,7 +275,8 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
               // Real progress: update steps based on content
               if (firstChunk) {
                 firstChunk = false
-                setProgressSteps([{ text: 'AI sedang menulis...', done: true }])
+                // Mark "writing" as in-progress (not done) — will be cleared by `finally` on completion
+                setProgressSteps([{ text: 'AI sedang menulis...', done: false }])
               }
 
               // Update message in real-time (throttle to avoid too many re-renders)
@@ -292,15 +300,12 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       }
 
       clearTimeout(timeoutId)
+      abortTimeoutRef.current = null
 
       // Ensure final reply is set
       if (!replyRef.current) replyRef.current = 'AI tidak memberikan respons. Coba lagi.'
       const reply = replyRef.current
 
-      // Update memory
-      memoryRef.current.push(`User: ${content}\nAI: ${reply.substring(0, 200)}`)
-      if (memoryRef.current.length > 10) memoryRef.current.shift()
-      setMemoryCount(memoryRef.current.length)
       haptic([10, 30, 10])
 
       // AGENT MODE: Parse and apply directly to files
@@ -331,6 +336,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
           const summaryLines = reply.split('\n').filter(l => l.trim().startsWith('-') || l.trim().startsWith('OK'))
           const summary = summaryLines.length > 0 ? summaryLines.join('\n') : `Selesai mengubah ${appliedFiles.length} file`
 
+          // Single memory push (was previously double-pushed)
           memoryRef.current.push(`User: ${content}\nAI applied: ${appliedFiles.join(', ')}`)
           if (memoryRef.current.length > 10) memoryRef.current.shift()
           setMemoryCount(memoryRef.current.length)
@@ -349,7 +355,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
         }
       }
 
-      // Normal/Fix/Convert response
+      // Normal/Fix/Convert response — single memory push (was previously double-pushed)
       setMessages([...baseMessages, { role: 'assistant', content: reply }])
       memoryRef.current.push(`User: ${content}\nAI: ${reply.substring(0, 200)}`)
       if (memoryRef.current.length > 10) memoryRef.current.shift()
@@ -358,7 +364,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
     } catch (error: any) {
       console.error(error)
       let errMsg = 'Terjadi kesalahan. Silakan coba lagi.'
-      if (error?.message === 'TIMEOUT') {
+      if (error?.name === 'AbortError' || error?.message === 'TIMEOUT') {
         errMsg = 'Permintaan terlalu lama (timeout 2 menit). Coba permintaan yang lebih singkat.'
       } else if (error?.message === 'CONNECTION') {
         errMsg = 'Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.'
@@ -368,6 +374,11 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       toast.error(errMsg)
       setMessages([...baseMessages, { role: 'assistant', content: errMsg }])
     } finally {
+      // Always clear the abort timeout, even on error (was previously leaked on error path)
+      if (abortTimeoutRef.current) {
+        clearTimeout(abortTimeoutRef.current)
+        abortTimeoutRef.current = null
+      }
       setLoading(false)
       setProgressSteps([])
       // Clear refs so they can be GC'd
@@ -382,6 +393,10 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       if (abortRef.current) {
         try { abortRef.current.abort() } catch { /* already aborted — ignore */ }
         abortRef.current = null
+      }
+      if (abortTimeoutRef.current) {
+        clearTimeout(abortTimeoutRef.current)
+        abortTimeoutRef.current = null
       }
       if (readerRef.current) {
         try { readerRef.current.cancel() } catch { /* stream already closed — ignore */ }

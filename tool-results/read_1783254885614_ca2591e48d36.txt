@@ -1,0 +1,623 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useCallback, useRef } from 'react'
+     4→import { ShieldCheck, X, Loader2, AlertCircle, CheckCircle, Lightbulb, FileCode2, ChevronDown, ChevronUp, Upload, FolderOpen, FileSearch } from 'lucide-react'
+     5→import {
+     6→  Dialog, DialogContent, DialogHeader, DialogTitle,
+     7→} from '@/components/ui/dialog'
+     8→import { Button } from '@/components/ui/button'
+     9→import { useEditorStore } from '@/store/editor-store'
+    10→import { cn } from '@/lib/utils'
+    11→import { transpileIndoCode } from '@/lib/editor/indocode'
+    12→import { toast } from 'sonner'
+    13→
+    14→interface BugItem {
+    15→  fileName: string
+    16→  line: number
+    17→  type: 'error' | 'warning' | 'tip'
+    18→  message: string
+    19→  suggestion?: string
+    20→}
+    21→
+    22→interface FileScanResult {
+    23→  fileName: string
+    24→  language: string
+    25→  bugs: BugItem[]
+    26→  clean: boolean
+    27→}
+    28→
+    29→type ScanMode = 'all' | 'active' | 'select' | 'upload'
+    30→
+    31→export function BugScanDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+    32→  const files = useEditorStore(s => s.files)
+    33→  const openTab = useEditorStore(s => s.openTab)
+    34→  const activeTabId = useEditorStore(s => s.activeTabId)
+    35→  const openTabs = useEditorStore(s => s.openTabs)
+    36→  const [scanning, setScanning] = useState(false)
+    37→  const [results, setResults] = useState<FileScanResult[]>([])
+    38→  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
+    39→  const [mode, setMode] = useState<ScanMode>('all')
+    40→  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set())
+    41→  const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string; language: string } | null>(null)
+    42→  const fileInputRef = useRef<HTMLInputElement>(null)
+    43→
+    44→  const activeTab = openTabs.find(t => t.id === activeTabId)
+    45→  const activeFile = activeTab ? files[activeTab.fileId] : null
+    46→
+    47→  const getLanguage = (name: string): string => {
+    48→    const ext = name.split('.').pop()?.toLowerCase() || ''
+    49→    const map: Record<string, string> = {
+    50→      js: 'javascript', ts: 'typescript', jsx: 'javascript', tsx: 'typescript',
+    51→      py: 'python', html: 'html', css: 'css', json: 'json', md: 'markdown',
+    52→      indo: 'indocode', java: 'java', c: 'c', cpp: 'cpp', go: 'go', rs: 'rust',
+    53→      php: 'php', rb: 'ruby', sh: 'shell', yml: 'yaml', yaml: 'yaml', xml: 'xml',
+    54→    }
+    55→    return map[ext] || 'plaintext'
+    56→  }
+    57→
+    58→  /**
+    59→   * Strip string literals and comments from source code, replacing them with
+    60→   * placeholders that don't contain quote/bracket characters. This is what
+    61→   * lets us count brackets and check for "unclosed strings" without being
+    62→   * fooled by:
+    63→   *   - URLs containing `//` (which the old code mistook for a comment start)
+    64→   *   - Braces/parens appearing inside string literals (e.g. `"{ nama }"`)
+    65→   *   - Quote characters inside comments
+    66→   *
+    67→   * For each line of the original source, we return the "code-only" version
+    68→   * (strings replaced with empty quotes, comments removed entirely). This
+    69→   * preserves line numbers so we can report errors at the right line.
+    70→   */
+    71→  const stripStringsAndComments = (src: string): { codeByLine: string[] } => {
+    72→    const lines = src.split('\n')
+    73→    const out: string[] = []
+    74→    let inBlockComment = false
+    75→    for (const line of lines) {
+    76→      let result = ''
+    77→      let i = 0
+    78→      while (i < line.length) {
+    79→        const c = line[i]
+    80→        const n = line[i + 1]
+    81→        if (inBlockComment) {
+    82→          if (c === '*' && n === '/') { inBlockComment = false; i += 2; continue }
+    83→          i++
+    84→          continue
+    85→        }
+    86→        // Line comment
+    87→        if (c === '/' && n === '/') { break /* rest of line is comment */ }
+    88→        // Block comment start
+    89→        if (c === '/' && n === '*') { inBlockComment = true; i += 2; continue }
+    90→        // String literal "..."
+    91→        if (c === '"') {
+    92→          result += '""'
+    93→          i++
+    94→          while (i < line.length && line[i] !== '"') {
+    95→            if (line[i] === '\\') i += 2
+    96→            else i++
+    97→          }
+    98→          if (i < line.length) i++ // skip closing "
+    99→          continue
+   100→        }
+   101→        // String literal '...'
+   102→        if (c === "'") {
+   103→          result += "''"
+   104→          i++
+   105→          while (i < line.length && line[i] !== "'") {
+   106→            if (line[i] === '\\') i += 2
+   107→            else i++
+   108→          }
+   109→          if (i < line.length) i++
+   110→          continue
+   111→        }
+   112→        // Template literal `...` — may span lines, but for line-based scan we
+   113→        // just blank it out and let the line-by-line logic not see inside.
+   114→        // Multi-line template literals are handled by the transpiler tokenizer,
+   115→        // not here. For bracket/quote-counting purposes, we collapse them.
+   116→        if (c === '`') {
+   117→          result += '``'
+   118→          i++
+   119→          while (i < line.length && line[i] !== '`') {
+   120→            if (line[i] === '\\') { i += 2; continue }
+   121→            // Skip ${...} — track nested braces
+   122→            if (line[i] === '$' && line[i + 1] === '{') {
+   123→              let depth = 1
+   124→              i += 2
+   125→              while (i < line.length && depth > 0) {
+   126→                if (line[i] === '{') depth++
+   127→                else if (line[i] === '}') depth--
+   128→                i++
+   129→              }
+   130→              continue
+   131→            }
+   132→            i++
+   133→          }
+   134→          if (i < line.length) i++
+   135→          continue
+   136→        }
+   137→        result += c
+   138→        i++
+   139→      }
+   140→      out.push(result)
+   141→    }
+   142→    return { codeByLine: out }
+   143→  }
+   144→
+   145→  /**
+   146→   * Check each line for unclosed string literals, IGNORING:
+   147→   *   - strings that contain `//` (URLs like "https://..." were previously
+   148→   *     mistaken for comment-start, producing false "unclosed string" warnings)
+   149→   *   - quote characters inside comments
+   150→   *
+   151→   * Strategy: tokenize each line; if we end the line in a "inside string"
+   152→   * state (and it's not a template literal, which can span lines), that's
+   153→   * a genuine unclosed string.
+   154→   */
+   155→  const findUnclosedStrings = (src: string): { line: number; quote: '"' | "'" }[] => {
+   156→    const out: { line: number; quote: '"' | "'" }[] = []
+   157→    const lines = src.split('\n')
+   158→    let inBlockComment = false
+   159→    lines.forEach((line, idx) => {
+   160→      let i = 0
+   161→      while (i < line.length) {
+   162→        const c = line[i]
+   163→        const n = line[i + 1]
+   164→        if (inBlockComment) {
+   165→          if (c === '*' && n === '/') { inBlockComment = false; i += 2; continue }
+   166→          i++
+   167→          continue
+   168→        }
+   169→        if (c === '/' && n === '/') { break /* line comment, rest is comment */ }
+   170→        if (c === '/' && n === '*') { inBlockComment = true; i += 2; continue }
+   171→        if (c === '"') {
+   172→          i++
+   173→          let closed = false
+   174→          while (i < line.length) {
+   175→            if (line[i] === '\\') { i += 2; continue }
+   176→            if (line[i] === '"') { closed = true; i++; break }
+   177→            i++
+   178→          }
+   179→          if (!closed) {
+   180→            out.push({ line: idx + 1, quote: '"' })
+   181→            return // don't report multiple per line
+   182→          }
+   183→          continue
+   184→        }
+   185→        if (c === "'") {
+   186→          i++
+   187→          let closed = false
+   188→          while (i < line.length) {
+   189→            if (line[i] === '\\') { i += 2; continue }
+   190→            if (line[i] === "'") { closed = true; i++; break }
+   191→            i++
+   192→          }
+   193→          if (!closed) {
+   194→            out.push({ line: idx + 1, quote: "'" })
+   195→            return
+   196→          }
+   197→          continue
+   198→        }
+   199→        if (c === '`') {
+   200→          // Template literal — may span lines, so just skip to closing backtick
+   201→          // on the SAME line; if it doesn't close, that's fine (multi-line).
+   202→          i++
+   203→          while (i < line.length) {
+   204→            if (line[i] === '\\') { i += 2; continue }
+   205→            if (line[i] === '$' && line[i + 1] === '{') {
+   206→              let depth = 1; i += 2
+   207→              while (i < line.length && depth > 0) {
+   208→                if (line[i] === '{') depth++
+   209→                else if (line[i] === '}') depth--
+   210→                i++
+   211→              }
+   212→              continue
+   213→            }
+   214→            if (line[i] === '`') { i++; break }
+   215→            i++
+   216→          }
+   217→          continue
+   218→        }
+   219→        i++
+   220→      }
+   221→    })
+   222→    return out
+   223→  }
+   224→
+   225→  const scanCode = (content: string, language: string, fileName: string): BugItem[] => {
+   226→    const bugs: BugItem[] = []
+   227→    const lines = content.split('\n')
+   228→    const { codeByLine } = stripStringsAndComments(content)
+   229→    const codeOnly = codeByLine.join('\n')
+   230→
+   231→    // 1. IndoCode transpile check
+   232→    if (language === 'indocode') {
+   233→      try {
+   234→        const result = transpileIndoCode(content)
+   235→        if (!result.success && result.errors.length > 0) {
+   236→          for (const err of result.errors) {
+   237→            bugs.push({ fileName, line: err.originalLine || err.line, type: 'error', message: err.message, suggestion: getSuggestion(err.message) })
+   238→          }
+   239→        }
+   240→      } catch (e) {
+   241→        // Transpile errors are surfaced via result.errors above; ignore parse failures here
+   242→        console.warn('[BugScan] transpileIndoCode threw for', fileName, e)
+   243→      }
+   244→
+   245→      // 2. JS keywords in IndoCode — use code-only (strings/comments stripped)
+   246→      codeByLine.forEach((strippedLine, idx) => {
+   247→        const t = strippedLine.trim()
+   248→        if (!t) return
+   249→        const jsMap: Record<string, string> = { '\\blet\\b': 'variabel', '\\bconst\\b': 'konstanta', '\\bfunction\\b': 'fungsi', '\\bif\\b': 'jika', '\\belse\\b': 'kalau_tidak', '\\bfor\\b': 'untuk', '\\bwhile\\b': 'selama', '\\breturn\\b': 'kembalikan', '\\btrue\\b': 'benar', '\\bfalse\\b': 'salah', '\\bnull\\b': 'kosong', '\\bbreak\\b': 'putus', '\\bconsole\\.log\\b': 'tampilkan' }
+   250→        for (const [js, indo] of Object.entries(jsMap)) {
+   251→          if (new RegExp(js, 'g').test(strippedLine)) {
+   252→            bugs.push({ fileName, line: idx + 1, type: 'error', message: 'Pakai "' + js.replace(/\\b/g, '') + '" di IndoCode. Ganti "' + indo + '"', suggestion: 'Ganti: ' + indo })
+   253→          }
+   254→        }
+   255→      })
+   256→    }
+   257→
+   258→    // 3. Bracket balance — count only brackets in code (NOT in strings/comments)
+   259→    // We've already stripped strings/comments into `codeOnly`. Each string was
+   260→    // replaced with `""` or `''` or `\`\`` so any braces/parens that were
+   261→    // inside string contents are gone.
+   262→    const ob = (codeOnly.match(/{/g) || []).length, cb = (codeOnly.match(/}/g) || []).length
+   263→    if (ob !== cb) bugs.push({ fileName, line: lines.length, type: 'error', message: 'Kurung { } tidak seimbang: ' + ob + ' vs ' + cb, suggestion: ob > cb ? 'Tambah ' + (ob - cb) + ' }' : 'Hapus ' + (cb - ob) + ' }' })
+   264→    const op = (codeOnly.match(/\(/g) || []).length, cp = (codeOnly.match(/\)/g) || []).length
+   265→    if (op !== cp) bugs.push({ fileName, line: lines.length, type: 'error', message: 'Kurung ( ) tidak seimbang: ' + op + ' vs ' + cp, suggestion: 'Cek kurung tutup' })
+   266→    const obr = (codeOnly.match(/\[/g) || []).length, cbr = (codeOnly.match(/\]/g) || []).length
+   267→    if (obr !== cbr) bugs.push({ fileName, line: lines.length, type: 'error', message: 'Kurung [ ] tidak seimbang: ' + obr + ' vs ' + cbr, suggestion: 'Cek kurung tutup' })
+   268→
+   269→    // 4. Unclosed strings — use proper tokenizer instead of `line.split('//')[0]`
+   270→    //    (which broke on URLs like "https://..." — the `//` was mistaken for
+   271→    //    comment-start, leaving the rest of the line unbalanced in quote count)
+   272→    const unclosed = findUnclosedStrings(content)
+   273→    for (const u of unclosed) {
+   274→      bugs.push({
+   275→        fileName,
+   276→        line: u.line,
+   277→        type: 'error',
+   278→        message: u.quote === '"' ? 'Tanda kutip " tidak tertutup' : "Tanda kutip ' tidak tertutup",
+   279→        suggestion: 'Tambahkan ' + u.quote + ' di akhir string',
+   280→      })
+   281→    }
+   282→
+   283→    // 5. HTML check
+   284→    if (language === 'html' || language === 'indocode') {
+   285→      const openTags = (content.match(/<(\w+)[^>]*[^/]>/g) || []).length
+   286→      const closeTags = (content.match(/<\/\w+>/g) || []).length
+   287→      const selfClosing = (content.match(/<\w+[^>]*\/>/g) || []).length
+   288→      if (openTags - selfClosing > closeTags + 5) bugs.push({ fileName, line: 0, type: 'warning', message: 'Tag buka (' + (openTags - selfClosing) + ') lebih banyak dari tutup (' + closeTags + ')', suggestion: 'Cek tag yang tidak ditutup' })
+   289→      if (!content.match(/<!DOCTYPE/i) && content.includes('<html')) bugs.push({ fileName, line: 1, type: 'warning', message: 'Tidak ada <!DOCTYPE html>', suggestion: 'Tambahkan di baris pertama' })
+   290→    }
+   291→
+   292→    // 6. CSS check — same string/comment-stripping treatment
+   293→    if (language === 'css') {
+   294→      const ob2 = (codeOnly.match(/{/g) || []).length
+   295→      const cb2 = (codeOnly.match(/}/g) || []).length
+   296→      if (ob2 !== cb2) bugs.push({ fileName, line: lines.length, type: 'error', message: 'Kurung CSS tidak seimbang: ' + ob2 + ' vs ' + cb2, suggestion: 'Cek }' })
+   297→    }
+   298→
+   299→    // 7. Code smells — check on stripped code so we don't false-positive on
+   300→    //    strings/comments that contain `==`, `var`, `debugger`, etc.
+   301→    codeByLine.forEach((strippedLine, idx) => {
+   302→      const t = strippedLine.trim()
+   303→      if (!t) return
+   304→      if (/\b==\b/.test(t) && !/\b===\b/.test(t) && !/\b!==\b/.test(t)) bugs.push({ fileName, line: idx + 1, type: 'warning', message: 'Pakai == sebaiknya ===', suggestion: 'Ganti == dengan ===' })
+   305→      if (/^(tangkap|catch)\s*\(/.test(t)) { const nextLine = codeByLine[idx + 1]?.trim() || ''; if (nextLine === '}' || nextLine === '') bugs.push({ fileName, line: idx + 1, type: 'warning', message: 'Block catch kosong', suggestion: 'Tambah: tampilkan(e)' }) }
+   306→      if (['javascript', 'typescript'].includes(language) && /\bvar\s+/.test(t)) bugs.push({ fileName, line: idx + 1, type: 'warning', message: 'Pakai var (usang)', suggestion: 'Ganti dengan let/const' })
+   307→      if (/\b(debugger|alert)\s*\(?.*\)?/.test(t)) bugs.push({ fileName, line: idx + 1, type: 'warning', message: 'Kode debugging/alert', suggestion: 'Hapus sebelum deploy' })
+   308→    })
+   309→
+   310→    // 8. Tips
+   311→    if (bugs.filter(b => b.type === 'error').length === 0) {
+   312→      if (language === 'indocode' && content.includes('aturInterval') && !content.includes('hentikanInterval')) {
+   313→        bugs.push({ fileName, line: 0, type: 'tip', message: 'Pakai aturInterval tanpa hentikanInterval', suggestion: 'Tambahkan cara stop' })
+   314→      }
+   315→    }
+   316→
+   317→    return bugs
+   318→  }
+   319→
+   320→  const runScan = useCallback(() => {
+   321→    setScanning(true)
+   322→    setResults([])
+   323→    setTimeout(() => {
+   324→      const currentFiles = useEditorStore.getState().files
+   325→      let filesToScan: { name: string; content: string; language: string }[] = []
+   326→
+   327→      if (mode === 'all') {
+   328→        filesToScan = Object.values(currentFiles)
+   329→          .filter(f => f.type === 'file' && f.content)
+   330→          .map(f => ({ name: f.name, content: f.content || '', language: f.language || 'plaintext' }))
+   331→      } else if (mode === 'active' && activeFile) {
+   332→        filesToScan = [{ name: activeFile.name, content: activeFile.content || '', language: activeFile.language || 'plaintext' }]
+   333→      } else if (mode === 'select') {
+   334→        filesToScan = Array.from(selectedFileIds)
+   335→          .map(id => currentFiles[id])
+   336→          .filter(f => f && f.type === 'file' && f.content)
+   337→          .map(f => ({ name: f.name, content: f.content || '', language: f.language || 'plaintext' }))
+   338→      } else if (mode === 'upload' && uploadedFile) {
+   339→        filesToScan = [uploadedFile]
+   340→      }
+   341→
+   342→      const scanResults: FileScanResult[] = filesToScan.map(f => {
+   343→        const bugs = scanCode(f.content, f.language, f.name)
+   344→        return { fileName: f.name, language: f.language, bugs, clean: bugs.filter(b => b.type === 'error').length === 0 }
+   345→      })
+   346→
+   347→      setResults(scanResults)
+   348→      setScanning(false)
+   349→      setExpandedFiles(new Set(scanResults.filter(r => !r.clean).map(r => r.fileName)))
+   350→    }, 100)
+   351→    // `scanCode` is a stable function defined inside this component closure
+   352→    // (it doesn't depend on any reactive state itself — only on its args).
+   353→    // We intentionally exclude it from deps to avoid re-creating runScan on
+   354→    // every render, which would re-trigger the auto-scan useEffect below.
+   355→    // eslint-disable-next-line react-hooks/exhaustive-deps
+   356→  }, [mode, activeFile, selectedFileIds, uploadedFile])
+   357→
+   358→  useEffect(() => {
+   359→    if (open) {
+   360→      const id = requestAnimationFrame(() => runScan())
+   361→      return () => cancelAnimationFrame(id)
+   362→    }
+   363→  }, [open, runScan])
+   364→
+   365→  const toggleFile = (fileName: string) => {
+   366→    setExpandedFiles(prev => { const n = new Set(prev); if (n.has(fileName)) n.delete(fileName); else n.add(fileName); return n })
+   367→  }
+   368→
+   369→  const toggleSelectedFile = (fileId: string) => {
+   370→    setSelectedFileIds(prev => { const n = new Set(prev); if (n.has(fileId)) n.delete(fileId); else n.add(fileId); return n })
+   371→  }
+   372→
+   373→  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+   374→    const file = e.target.files?.[0]
+   375→    if (!file) return
+   376→    const reader = new FileReader()
+   377→    reader.onload = () => {
+   378→      const content = reader.result as string
+   379→      setUploadedFile({ name: file.name, content, language: getLanguage(file.name) })
+   380→      toast.success('File dimuat: ' + file.name)
+   381→      setMode('upload')
+   382→    }
+   383→    reader.readAsText(file)
+   384→  }
+   385→
+   386→  const totalErrors = results.reduce((s, r) => s + r.bugs.filter(b => b.type === 'error').length, 0)
+   387→  const totalWarnings = results.reduce((s, r) => s + r.bugs.filter(b => b.type === 'warning').length, 0)
+   388→  const totalTips = results.reduce((s, r) => s + r.bugs.filter(b => b.type === 'tip').length, 0)
+   389→  const cleanFiles = results.filter(r => r.clean).length
+   390→  const errorFiles = results.filter(r => !r.clean)
+   391→  const allProjectFiles = Object.values(files).filter(f => f.type === 'file')
+   392→
+   393→  return (
+   394→    <Dialog open={open} onOpenChange={onOpenChange}>
+   395→      <DialogContent className="max-h-[90vh] w-full max-w-2xl overflow-hidden p-0 sm:rounded-2xl">
+   396→        <DialogHeader className="border-b border-[var(--editor-border)] px-5 py-4">
+   397→          <DialogTitle className="flex items-center gap-2.5 text-base">
+   398→            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500/20">
+   399→              <ShieldCheck className="h-4 w-4 text-green-400" />
+   400→            </div>
+   401→            Scan Bug
+   402→            {scanning && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+   403→          </DialogTitle>
+   404→        </DialogHeader>
+   405→
+   406→        <div className="max-h-[70vh] overflow-y-auto">
+   407→          {/* Mode selector */}
+   408→          <div className="border-b border-[var(--editor-border)] p-3">
+   409→            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+   410→              <ModeBtn icon={FolderOpen} label="Semua File" active={mode === 'all'} onClick={() => { setMode('all'); setSelectedFileIds(new Set()); setUploadedFile(null) }} />
+   411→              <ModeBtn icon={FileCode2} label="File Aktif" active={mode === 'active'} onClick={() => { setMode('active'); setSelectedFileIds(new Set()); setUploadedFile(null) }} disabled={!activeFile} />
+   412→              <ModeBtn icon={FileSearch} label="Pilih File" active={mode === 'select'} onClick={() => { setMode('select'); setUploadedFile(null) }} />
+   413→              <ModeBtn icon={Upload} label="Dari Storage" active={mode === 'upload'} onClick={() => { fileInputRef.current?.click() }} />
+   414→            </div>
+   415→
+   416→            {/* Select file mode: show file list */}
+   417→            {mode === 'select' && (
+   418→              <div className="mt-3 max-h-32 overflow-y-auto rounded-lg border border-[var(--editor-border)] bg-[var(--input-bg)] p-2">
+   419→                {allProjectFiles.map(f => (
+   420→                  <label key={f.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-[var(--list-hover)]">
+   421→                    <input
+   422→                      type="checkbox"
+   423→                      checked={selectedFileIds.has(f.id)}
+   424→                      onChange={() => toggleSelectedFile(f.id)}
+   425→                      className="h-3.5 w-3.5 accent-blue-500"
+   426→                    />
+   427→                    <FileCode2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+   428→                    <span className="flex-1 truncate">{f.name}</span>
+   429→                    <span className="text-[10px] text-muted-foreground">{f.language}</span>
+   430→                  </label>
+   431→                ))}
+   432→                {allProjectFiles.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">Tidak ada file</p>}
+   433→              </div>
+   434→            )}
+   435→
+   436→            {/* Upload mode: show uploaded file info */}
+   437→            {mode === 'upload' && (
+   438→              <div className="mt-3">
+   439→                {uploadedFile ? (
+   440→                  <div className="flex items-center gap-2 rounded-lg border border-[var(--editor-border)] bg-[var(--input-bg)] p-2.5 text-xs">
+   441→                    <FileCode2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+   442→                    <span className="flex-1 truncate font-medium">{uploadedFile.name}</span>
+   443→                    <span className="text-[10px] text-muted-foreground">{uploadedFile.language}</span>
+   444→                    <button onClick={() => fileInputRef.current?.click()} className="rounded bg-[var(--list-hover)] px-2 py-1 text-[10px] font-medium hover:bg-[var(--list-active)]">Ganti</button>
+   445→                  </div>
+   446→                ) : (
+   447→                  <button onClick={() => fileInputRef.current?.click()} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--editor-border)] py-4 text-xs text-muted-foreground hover:border-[var(--list-active)] hover:text-foreground">
+   448→                    <Upload className="h-4 w-4" /> Pilih file dari perangkat
+   449→                  </button>
+   450→                )}
+   451→              </div>
+   452→            )}
+   453→
+   454→            <input ref={fileInputRef} type="file" onChange={handleUpload} className="hidden" accept=".js,.ts,.jsx,.tsx,.py,.html,.css,.json,.md,.indo,.java,.c,.cpp,.go,.rs,.php,.rb,.sh,.yml,.yaml,.xml,.txt" />
+   455→
+   456→            {/* Scan button */}
+   457→            <div className="mt-3 flex justify-center">
+   458→              <Button onClick={runScan} disabled={scanning || (mode === 'select' && selectedFileIds.size === 0) || (mode === 'upload' && !uploadedFile)} className="gap-2" size="sm">
+   459→                {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+   460→                {scanning ? 'Memindai...' : 'Scan Sekarang'}
+   461→              </Button>
+   462→            </div>
+   463→          </div>
+   464→
+   465→          {/* Results */}
+   466→          {scanning ? (
+   467→            <div className="flex flex-col items-center justify-center py-16">
+   468→              <Loader2 className="mb-3 h-10 w-10 animate-spin text-green-400" />
+   469→              <p className="text-sm text-muted-foreground">Memindai...</p>
+   470→            </div>
+   471→          ) : results.length > 0 ? (
+   472→            <div className="p-4">
+   473→              {/* Summary */}
+   474→              <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+   475→                <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-center">
+   476→                  <div className="text-2xl font-bold text-red-400">{totalErrors}</div>
+   477→                  <div className="text-[10px] font-medium text-muted-foreground">Error</div>
+   478→                </div>
+   479→                <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-center">
+   480→                  <div className="text-2xl font-bold text-yellow-400">{totalWarnings}</div>
+   481→                  <div className="text-[10px] font-medium text-muted-foreground">Warning</div>
+   482→                </div>
+   483→                <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-center">
+   484→                  <div className="text-2xl font-bold text-blue-400">{totalTips}</div>
+   485→                  <div className="text-[10px] font-medium text-muted-foreground">Saran</div>
+   486→                </div>
+   487→                <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-3 text-center">
+   488→                  <div className="text-2xl font-bold text-green-400">{cleanFiles}</div>
+   489→                  <div className="text-[10px] font-medium text-muted-foreground">Bersih</div>
+   490→                </div>
+   491→              </div>
+   492→
+   493→              {/* Error files */}
+   494→              {errorFiles.length > 0 && (
+   495→                <div className="mb-3">
+   496→                  <h3 className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-red-400">File dengan Error ({errorFiles.length})</h3>
+   497→                  <div className="space-y-2">
+   498→                    {errorFiles.map(r => (
+   499→                      <FileResult key={r.fileName} result={r} expanded={expandedFiles.has(r.fileName)} onToggle={() => toggleFile(r.fileName)} onJump={(lineNum) => {
+   500→                        const f = Object.values(files).find(f => f.name === r.fileName && f.type === 'file')
+   501→                        if (f) {
+   502→                          openTab(f.id, false)
+   503→                          onOpenChange(false)
+   504→                          // Jump to the actual line in Monaco (after dialog closes & file opens)
+   505→                          if (lineNum && lineNum > 0) {
+   506→                            setTimeout(() => {
+   507→                              const editors = (window as any).monaco?.editor?.getEditors?.() || []
+   508→                              if (editors.length > 0) {
+   509→                                const ed = editors[0]
+   510→                                const model = ed.getModel()
+   511→                                const lineCount = model ? model.getLineCount() : 1
+   512→                                const target = Math.min(lineNum, lineCount)
+   513→                                ed.revealLineInCenter(target)
+   514→                                ed.setPosition({ lineNumber: target, column: 1 })
+   515→                                ed.focus()
+   516→                              }
+   517→                            }, 250)
+   518→                          }
+   519→                        }
+   520→                      }} />
+   521→                    ))}
+   522→                  </div>
+   523→                </div>
+   524→              )}
+   525→
+   526→              {/* Clean files */}
+   527→              {cleanFiles > 0 && (
+   528→                <div>
+   529→                  <h3 className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-green-400">File Bersih ({cleanFiles})</h3>
+   530→                  <div className="space-y-1">
+   531→                    {results.filter(r => r.clean).map(r => (
+   532→                      <div key={r.fileName} className="flex items-center gap-2 rounded-lg bg-green-500/5 px-3 py-2 text-xs">
+   533→                        <CheckCircle className="h-3.5 w-3.5 text-green-400" />
+   534→                        <span className="font-medium">{r.fileName}</span>
+   535→                        <span className="text-muted-foreground">{r.language}</span>
+   536→                      </div>
+   537→                    ))}
+   538→                  </div>
+   539→                </div>
+   540→              )}
+   541→            </div>
+   542→          ) : (
+   543→            <div className="py-8 text-center text-sm text-muted-foreground">Pilih mode scan lalu klik "Scan Sekarang"</div>
+   544→          )}
+   545→        </div>
+   546→      </DialogContent>
+   547→    </Dialog>
+   548→  )
+   549→}
+   550→
+   551→function ModeBtn({ icon: Icon, label, active, onClick, disabled }: { icon: any; label: string; active: boolean; onClick: () => void; disabled?: boolean }) {
+   552→  return (
+   553→    <button
+   554→      onClick={onClick}
+   555→      disabled={disabled}
+   556→      className={cn(
+   557→        'flex flex-col items-center gap-1 rounded-xl border p-2.5 text-xs font-medium transition-all',
+   558→        active ? 'border-green-500/50 bg-green-500/10 text-green-400' : 'border-[var(--editor-border)] bg-[var(--input-bg)] text-muted-foreground hover:border-[var(--list-active)] hover:text-foreground',
+   559→        disabled && 'opacity-40 cursor-not-allowed'
+   560→      )}
+   561→    >
+   562→      <Icon className="h-4 w-4" />
+   563→      <span>{label}</span>
+   564→    </button>
+   565→  )
+   566→}
+   567→
+   568→function FileResult({ result, expanded, onToggle, onJump }: { result: FileScanResult; expanded: boolean; onToggle: () => void; onJump: (lineNum?: number) => void }) {
+   569→  const ec = result.bugs.filter(b => b.type === 'error').length
+   570→  const wc = result.bugs.filter(b => b.type === 'warning').length
+   571→  const tc = result.bugs.filter(b => b.type === 'tip').length
+   572→  return (
+   573→    <div className="overflow-hidden rounded-xl border border-[var(--editor-border)] bg-[var(--side-bar-bg)]">
+   574→      <button onClick={onToggle} className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[var(--list-hover)]">
+   575→        <FileCode2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+   576→        <span className="flex-1 truncate text-sm font-medium">{result.fileName}</span>
+   577→        {ec > 0 && <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">{ec}</span>}
+   578→        {wc > 0 && <span className="rounded-full bg-yellow-500/20 px-2 py-0.5 text-[10px] font-bold text-yellow-400">{wc}</span>}
+   579→        {tc > 0 && <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-bold text-blue-400">{tc}</span>}
+   580→        {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronUp className="h-4 w-4 text-muted-foreground" />}
+   581→      </button>
+   582→      {expanded && (
+   583→        <div className="border-t border-[var(--editor-border)] p-2 space-y-1.5">
+   584→          {result.bugs.map((bug, idx) => {
+   585→            const Icon = bug.type === 'error' ? AlertCircle : bug.type === 'warning' ? AlertCircle : Lightbulb
+   586→            const color = bug.type === 'error' ? 'text-red-400' : bug.type === 'warning' ? 'text-yellow-400' : 'text-blue-400'
+   587→            const bg = bug.type === 'error' ? 'bg-red-500/10' : bug.type === 'warning' ? 'bg-yellow-500/10' : 'bg-blue-500/10'
+   588→            return (
+   589→              <div key={idx} className={cn('rounded-lg p-2.5 text-xs', bg)}>
+   590→                <div className="flex items-start gap-2">
+   591→                  <Icon className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', color)} />
+   592→                  <div className="flex-1 min-w-0">
+   593→                    {bug.line > 0 && (
+   594→                      <button
+   595→                        onClick={() => onJump(bug.line)}
+   596→                        className="mb-0.5 inline-block rounded bg-[var(--input-bg)] px-1.5 py-0.5 text-[9px] font-medium hover:bg-[var(--list-hover)] active:scale-95 transition-transform"
+   597→                        title="Klik untuk lompat ke baris ini"
+   598→                      >
+   599→                        Baris {bug.line}
+   600→                      </button>
+   601→                    )}
+   602→                    <p className="text-foreground">{bug.message}</p>
+   603→                    {bug.suggestion && <p className="mt-1 text-muted-foreground italic">{'-> '}{bug.suggestion}</p>}
+   604→                  </div>
+   605→                </div>
+   606→              </div>
+   607→            )
+   608→          })}
+   609→        </div>
+   610→      )}
+   611→    </div>
+   612→  )
+   613→}
+   614→
+   615→function getSuggestion(msg: string): string | undefined {
+   616→  if (msg.includes('tidak didefinisikan')) return 'Deklarasikan dengan "variabel" atau "konstanta"'
+   617→  if (msg.includes('Input tidak lengkap')) return 'Cek kurung yang tidak ditutup'
+   618→  if (msg.includes('bukan sebuah fungsi')) return 'Cek ejaan nama fungsi'
+   619→  if (msg.includes('tidak seimbang')) return 'Tambahkan kurung tutup'
+   620→  if (msg.includes('Token tidak terduga')) return 'Cek tanda baca'
+   621→  return undefined
+   622→}
+   623→

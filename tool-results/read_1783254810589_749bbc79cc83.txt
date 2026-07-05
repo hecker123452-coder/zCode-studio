@@ -1,0 +1,660 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useState, useRef, useEffect, useCallback } from 'react'
+     4→     4→import {
+     5→     5→  Bot, Send, Sparkles, Trash2, Loader2, User, Code2,
+     6→     6→  Lightbulb, Bug, BookOpen, Wand2, ArrowLeft, X, Copy, Check,
+     7→     7→  RefreshCw, Wrench, FileCode, Zap, ClipboardList, GitBranch,
+     8→     8→  FileSearch, GraduationCap, ArrowLeftRight, Terminal, Brain,
+     9→     9→  PlusSquare, MessageSquarePlus,
+    10→    10→  type LucideIcon,
+    11→    11→} from 'lucide-react'
+    12→    12→import { useEditorStore } from '@/store/editor-store'
+    13→    13→import { cn } from '@/lib/utils'
+    14→    14→import { Textarea } from '@/components/ui/textarea'
+    15→    15→import { Button } from '@/components/ui/button'
+    16→    16→import { toast } from 'sonner'
+    17→    17→
+    18→    18→interface ProgressStep {
+    19→    19→  text: string
+    20→    20→  done: boolean
+    21→    21→}
+    22→    22→
+    23→    23→interface ChatMessage {
+    24→    24→  role: 'user' | 'assistant'
+    25→    25→  content: string
+    26→    26→  isAgentDone?: boolean
+    27→    27→  appliedFiles?: string[]
+    28→    28→  thinkingSteps?: string[]
+    29→    29→}
+    30→    30→
+    31→    31→interface QuickAction {
+    32→    32→  icon: LucideIcon
+    33→    33→  text: string
+    34→    34→  prompt: string
+    35→    35→  mode?: 'fix' | 'tutor' | 'convert-js' | 'convert-indo'
+    36→    36→}
+    37→    37→
+    38→    38→const quickActions: QuickAction[] = [
+    39→    39→  { icon: Wrench, text: 'Fix Kode', prompt: 'Fix all bugs in my file. Return complete fixed code.', mode: 'fix' },
+    40→    40→  { icon: GraduationCap, text: 'Belajar', prompt: 'Ajari saya coding dari dasar.', mode: 'tutor' },
+    41→    41→  { icon: ArrowLeftRight, text: '-> JS', prompt: 'Convert IndoCode to JavaScript.', mode: 'convert-js' },
+    42→    42→  { icon: ArrowLeftRight, text: '-> Indo', prompt: 'Convert JavaScript to IndoCode.', mode: 'convert-indo' },
+    43→    43→  { icon: FileSearch, text: 'Analisis', prompt: 'Analyze my file in detail.' },
+    44→    44→  { icon: Bug, text: 'Cari Bug', prompt: 'Find bugs in my code with line refs.' },
+    45→    45→  { icon: Lightbulb, text: 'Improve', prompt: 'How to improve my code?' },
+    46→    46→  { icon: BookOpen, text: 'Jelasin', prompt: 'Explain what my code does.' },
+    47→    47→]
+    48→    48→
+    49→    49→interface AIAssistantProps {
+    50→    50→  onClose?: () => void
+    51→    51→  isMobile?: boolean
+    52→    52→}
+    53→    53→
+    54→    54→// Parse agent response to extract file actions
+    55→    55→function parseAgentFiles(reply: string, defaultFileName: string): { fileName: string, content: string }[] {
+    56→    56→  const actions: { fileName: string, content: string }[] = []
+    57→    57→  // Match code blocks with filename: ```lang:filename
+    58→    58→  const fileRegex = /```[\w]*:(\S+)\n([\s\S]*?)```/g
+    59→    59→  let match
+    60→    60→  while ((match = fileRegex.exec(reply)) !== null) {
+    61→    61→    actions.push({ fileName: match[1], content: match[2] })
+    62→    62→  }
+    63→    63→  // If no filename blocks, try regular code blocks
+    64→    64→  if (actions.length === 0) {
+    65→    65→    const codeRegex = /```[\w]*\n([\s\S]*?)```/g
+    66→    66→    while ((match = codeRegex.exec(reply)) !== null) {
+    67→    67→      if (match[1].split('\n').length > 3) {
+    68→    68→        actions.push({ fileName: defaultFileName, content: match[1] })
+    69→    69→        break
+    70→    70→      }
+    71→    71→    }
+    72→    72→  }
+    73→    73→  return actions
+    74→    74→}
+    75→    75→
+    76→    76→// Extract thinking steps from reply (bullet points before code blocks)
+    77→    77→function parseThinkingSteps(reply: string): string[] {
+    78→    78→  const beforeCode = reply.split(/```/)[0] || ''
+    79→    79→  const lines = beforeCode.split('\n').filter(l => l.trim().startsWith('-') || l.trim().startsWith('•'))
+    80→    80→  return lines.map(l => l.trim().replace(/^[-•]\s*/, '')).filter(l => l.length > 0)
+    81→    81→}
+    82→    82→
+    83→    83→export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
+    84→    84→  const [messages, setMessages] = useState<ChatMessage[]>([])
+    85→    85→  const [input, setInput] = useState('')
+    86→    86→  const [loading, setLoading] = useState(false)
+    87→    87→  const [mode, setMode] = useState<'normal' | 'agent'>('normal')
+    88→    88→  const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([])
+    89→    89→  const [memoryCount, setMemoryCount] = useState(0)
+    90→    90→  const viewportRef = useRef<HTMLDivElement>(null)
+    91→    91→  const memoryRef = useRef<string[]>([])
+    92→    92→  const replyRef = useRef<string>('')
+    93→    93→  // Track the current AbortController so we can cancel on unmount / new chat / new message
+    94→    94→  const abortRef = useRef<AbortController | null>(null)
+    95→    95→  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
+    96→    96→
+    97→    97→  const activeTabId = useEditorStore(s => s.activeTabId)
+    98→    98→  const openTabs = useEditorStore(s => s.openTabs)
+    99→    99→  const files = useEditorStore(s => s.files)
+   100→   100→  const updateFileContent = useEditorStore(s => s.updateFileContent)
+   101→   101→  const createFile = useEditorStore(s => s.createFile)
+   102→   102→  const openTab = useEditorStore(s => s.openTab)
+   103→   103→
+   104→   104→  const activeTab = openTabs.find(t => t.id === activeTabId)
+   105→   105→  const activeFile = activeTab ? files[activeTab.fileId] : null
+   106→   106→
+   107→   107→  useEffect(() => {
+   108→   108→    if (viewportRef.current) {
+   109→   109→      viewportRef.current.scrollTop = viewportRef.current.scrollHeight
+   110→   110→    }
+   111→   111→  }, [messages, loading, progressSteps])
+   112→   112→
+   113→   113→  const haptic = useCallback((pattern: number | number[] = 10) => {
+   114→   114→    if (isMobile && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+   115→   115→      try { navigator.vibrate(pattern) } catch { /* Vibration API not supported on this browser — ignore */ }
+   116→   116→    }
+   117→   117→  }, [isMobile])
+   118→   118→
+   119→   119→  const addProgressStep = useCallback((text: string) => {
+   120→   120→    setProgressSteps(prev => [...prev, { text, done: false }])
+   121→   121→  }, [])
+   122→   122→
+   123→   123→  const completeProgressStep = useCallback(() => {
+   124→   124→    setProgressSteps(prev => {
+   125→   125→      const last = prev[prev.length - 1]
+   126→   126→      if (last && !last.done) return [...prev.slice(0, -1), { ...last, done: true }]
+   127→   127→      return prev
+   128→   128→    })
+   129→   129→  }, [])
+   130→   130→
+   131→   131→  const handleNewChat = useCallback(() => {
+   132→   132→    haptic(15)
+   133→   133→    setMessages([])
+   134→   134→    setProgressSteps([])
+   135→   135→    memoryRef.current = []
+   136→   136→    setMemoryCount(0)
+   137→   137→    setInput('')
+   138→   138→    setLoading(false)
+   139→   139→    toast.success('Chat baru dimulai')
+   140→   140→  }, [haptic])
+   141→   141→
+   142→   142→  const handleDeleteChat = useCallback(() => {
+   143→   143→    if (messages.length === 0) return
+   144→   144→    haptic([10, 30, 10])
+   145→   145→    if (confirm('Hapus semua percakapan? Tindakan ini tidak dapat dibatalkan.')) {
+   146→   146→      setMessages([])
+   147→   147→      setProgressSteps([])
+   148→   148→      memoryRef.current = []
+   149→   149→      setMemoryCount(0)
+   150→   150→      setInput('')
+   151→   151→      setLoading(false)
+   152→   152→      toast.success('Chat dihapus')
+   153→   153→    }
+   154→   154→  }, [haptic, messages.length])
+   155→   155→
+   156→   156→  const sendMessage = async (text?: string, action?: QuickAction) => {
+   157→   157→    const content = (text || input).trim()
+   158→   158→    if (!content || loading) return
+   159→   159→
+   160→   160→    // Cancel any in-flight request before starting a new one (prevents race condition)
+   161→   161→    if (abortRef.current) {
+   162→   162→      try { abortRef.current.abort() } catch { /* already aborted — ignore */ }
+   163→   163→      abortRef.current = null
+   164→   164→    }
+   165→   165→    if (readerRef.current) {
+   166→   166→      try { readerRef.current.cancel() } catch { /* stream already closed — ignore */ }
+   167→   167→      readerRef.current = null
+   168→   168→    }
+   169→   169→
+   170→   170→    haptic(15)
+   171→   171→    setInput('')
+   172→   172→    const userMsg: ChatMessage = { role: 'user', content }
+   173→   173→    const baseMessages = [...messages, userMsg]
+   174→   174→    setMessages(baseMessages)
+   175→   175→    setLoading(true)
+   176→   176→    setProgressSteps([])
+   177→   177→
+   178→   178→    const useAgentMode = mode === 'agent' && !action?.mode
+   179→   179→    const useFixMode = action?.mode === 'fix'
+   180→   180→    const useTutorMode = action?.mode === 'tutor'
+   181→   181→    const useConvertMode = action?.mode === 'convert-js' ? 'indo-to-js' : action?.mode === 'convert-indo' ? 'js-to-indo' : undefined
+   182→   182→
+   183→   183→    // Real progress: show "menghubungkan" status
+   184→   184→    setProgressSteps([{ text: 'Menghubungkan ke AI...', done: false }])
+   185→   185→
+   186→   186→    try {
+   187→   187→      const context = activeFile
+   188→   188→        ? `File: ${activeFile.name}\nLanguage: ${activeFile.language}\n\n\`\`\`${activeFile.language}\n${activeFile.content || '(empty file)'}\n\`\`\``
+   189→   189→        : undefined
+   190→   190→
+   191→   191→      const memoryContext = memoryRef.current.length > 0
+   192→   192→        ? `\n\n=== MEMORY (belajar dari percakapan sebelumnya) ===\n${memoryRef.current.join('\n')}`
+   193→   193→        : ''
+   194→   194→
+   195→   195→      const allFiles = Object.values(files).filter(f => f.type === 'file')
+   196→   196→      const projectFilesForAI = (useAgentMode || useFixMode || useConvertMode) ? [] : allFiles
+   197→   197→        .filter(f => f.content && f.content.length > 0)
+   198→   198→        .slice(0, 5)
+   199→   199→        .map(f => ({
+   200→   200→          name: f.name,
+   201→   201→          language: f.language,
+   202→   202→          content: f.content!.substring(0, 500),
+   203→   203→        }))
+   204→   204→
+   205→   205→      // Stream request — real-time progress
+   206→   206→      const controller = new AbortController()
+   207→   207→      abortRef.current = controller
+   208→   208→      const timeoutId = setTimeout(() => controller.abort(), 120000)
+   209→   209→
+   210→   210→      let response: Response
+   211→   211→      try {
+   212→   212→        response = await fetch('/api/ai', {
+   213→   213→          method: 'POST',
+   214→   214→          headers: { 'Content-Type': 'application/json' },
+   215→   215→          body: JSON.stringify({
+   216→   216→            messages: baseMessages.map(m => ({ role: m.role, content: m.content })),
+   217→   217→            context: context ? (context + memoryContext) : (memoryContext || undefined),
+   218→   218→            applyMode: useFixMode,
+   219→   219→            tutorMode: useTutorMode,
+   220→   220→            convertMode: useConvertMode,
+   221→   221→            agentMode: useAgentMode,
+   222→   222→            projectFiles: projectFilesForAI,
+   223→   223→            stream: true,
+   224→   224→          }),
+   225→   225→          signal: controller.signal,
+   226→   226→        })
+   227→   227→      } catch (fetchErr: any) {
+   228→   228→        clearTimeout(timeoutId)
+   229→   229→        if (fetchErr.name === 'AbortError') throw new Error('TIMEOUT')
+   230→   230→        throw new Error('CONNECTION')
+   231→   231→      }
+   232→   232→
+   233→   233→      if (!response.ok) throw new Error('AI request failed')
+   234→   234→
+   235→   235→      // Read SSE stream — real progress!
+   236→   236→      const reader = response.body?.getReader()
+   237→   237→      if (!reader) throw new Error('STREAM_ERROR')
+   238→   238→      readerRef.current = reader
+   239→   239→
+   240→   240→      const decoder = new TextDecoder()
+   241→   241→      replyRef.current = ''
+   242→   242→      let buffer = ''
+   243→   243→      let firstChunk = true
+   244→   244→
+   245→   245→      // Show a placeholder assistant message that we'll update in real-time
+   246→   246→      setMessages([...baseMessages, { role: 'assistant', content: '' }])
+   247→   247→
+   248→   248→      while (true) {
+   249→   249→        const { done, value } = await reader.read()
+   250→   250→        if (done) break
+   251→   251→
+   252→   252→        buffer += decoder.decode(value, { stream: true })
+   253→   253→
+   254→   254→        // Parse SSE format: "data: {json}\n\n"
+   255→   255→        const lines = buffer.split('\n')
+   256→   256→        buffer = lines.pop() || ''
+   257→   257→
+   258→   258→        for (const line of lines) {
+   259→   259→          if (!line.startsWith('data: ')) continue
+   260→   260→          const dataStr = line.slice(6).trim()
+   261→   261→          if (dataStr === '[DONE]') continue
+   262→   262→
+   263→   263→          try {
+   264→   264→            const parsed = JSON.parse(dataStr)
+   265→   265→            if (parsed.content) {
+   266→   266→              replyRef.current += parsed.content
+   267→   267→
+   268→   268→              // Real progress: update steps based on content
+   269→   269→              if (firstChunk) {
+   270→   270→                firstChunk = false
+   271→   271→                setProgressSteps([{ text: 'AI sedang menulis...', done: true }])
+   272→   272→              }
+   273→   273→
+   274→   274→              // Update message in real-time (throttle to avoid too many re-renders)
+   275→   275→              const currentReply = replyRef.current
+   276→   276→              setMessages(prev => {
+   277→   277→                const newMsgs = [...prev]
+   278→   278→                const lastMsg = newMsgs[newMsgs.length - 1]
+   279→   279→                if (lastMsg && lastMsg.role === 'assistant') {
+   280→   280→                  lastMsg.content = currentReply
+   281→   281→                }
+   282→   282→                return newMsgs
+   283→   283→              })
+   284→   284→            }
+   285→   285→            if (parsed.error) {
+   286→   286→              throw new Error(parsed.error)
+   287→   287→            }
+   288→   288→          } catch (e) {
+   289→   289→            // skip parse errors
+   290→   290→          }
+   291→   291→        }
+   292→   292→      }
+   293→   293→
+   294→   294→      clearTimeout(timeoutId)
+   295→   295→
+   296→   296→      // Ensure final reply is set
+   297→   297→      if (!replyRef.current) replyRef.current = 'AI tidak memberikan respons. Coba lagi.'
+   298→   298→      const reply = replyRef.current
+   299→   299→
+   300→   300→      // Update memory
+   301→   301→      memoryRef.current.push(`User: ${content}\nAI: ${reply.substring(0, 200)}`)
+   302→   302→      if (memoryRef.current.length > 10) memoryRef.current.shift()
+   303→   303→      setMemoryCount(memoryRef.current.length)
+   304→   304→      haptic([10, 30, 10])
+   305→   305→
+   306→   306→      // AGENT MODE: Parse and apply directly to files
+   307→   307→      if (useAgentMode) {
+   308→   308→        setProgressSteps([{ text: 'Menerapkan kode ke file...', done: false }])
+   309→   309→
+   310→   310→        const actions = parseAgentFiles(reply, activeFile?.name || 'index.html')
+   311→   311→        const thinkingSteps = parseThinkingSteps(reply)
+   312→   312→
+   313→   313→        if (actions.length > 0) {
+   314→   314→          const appliedFiles: string[] = []
+   315→   315→          for (const action of actions) {
+   316→   316→            const existingFile = Object.values(files).find(f => f.name === action.fileName && f.type === 'file')
+   317→   317→            if (existingFile) {
+   318→   318→              updateFileContent(existingFile.id, action.content)
+   319→   319→              openTab(existingFile.id, false)
+   320→   320→              appliedFiles.push(action.fileName)
+   321→   321→            } else {
+   322→   322→              const newId = createFile(action.fileName, null)
+   323→   323→              useEditorStore.getState().updateFileContent(newId, action.content)
+   324→   324→              openTab(newId, false)
+   325→   325→              appliedFiles.push(action.fileName + ' (baru)')
+   326→   326→            }
+   327→   327→          }
+   328→   328→
+   329→   329→          setProgressSteps([{ text: `Selesai! ${appliedFiles.length} file diperbarui`, done: true }])
+   330→   330→
+   331→   331→          const summaryLines = reply.split('\n').filter(l => l.trim().startsWith('-') || l.trim().startsWith('OK'))
+   332→   332→          const summary = summaryLines.length > 0 ? summaryLines.join('\n') : `Selesai mengubah ${appliedFiles.length} file`
+   333→   333→
+   334→   334→          memoryRef.current.push(`User: ${content}\nAI applied: ${appliedFiles.join(', ')}`)
+   335→   335→          if (memoryRef.current.length > 10) memoryRef.current.shift()
+   336→   336→          setMemoryCount(memoryRef.current.length)
+   337→   337→
+   338→   338→          haptic([10, 30, 10])
+   339→   339→          setProgressSteps([])
+   340→   340→
+   341→   341→          setMessages([...baseMessages, {
+   342→   342→            role: 'assistant',
+   343→   343→            content: summary,
+   344→   344→            isAgentDone: true,
+   345→   345→            appliedFiles,
+   346→   346→            thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
+   347→   347→          }])
+   348→   348→          return
+   349→   349→        }
+   350→   350→      }
+   351→   351→
+   352→   352→      // Normal/Fix/Convert response
+   353→   353→      setMessages([...baseMessages, { role: 'assistant', content: reply }])
+   354→   354→      memoryRef.current.push(`User: ${content}\nAI: ${reply.substring(0, 200)}`)
+   355→   355→      if (memoryRef.current.length > 10) memoryRef.current.shift()
+   356→   356→      setMemoryCount(memoryRef.current.length)
+   357→   357→      haptic([10, 30, 10])
+   358→   358→    } catch (error: any) {
+   359→   359→      console.error(error)
+   360→   360→      let errMsg = 'Terjadi kesalahan. Silakan coba lagi.'
+   361→   361→      if (error?.message === 'TIMEOUT') {
+   362→   362→        errMsg = 'Permintaan terlalu lama (timeout 2 menit). Coba permintaan yang lebih singkat.'
+   363→   363→      } else if (error?.message === 'CONNECTION') {
+   364→   364→        errMsg = 'Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.'
+   365→   365→      } else if (error?.message === 'AI request failed') {
+   366→   366→        errMsg = 'Server AI sedang sibuk. Tunggu sebentar lalu coba lagi.'
+   367→   367→      }
+   368→   368→      toast.error(errMsg)
+   369→   369→      setMessages([...baseMessages, { role: 'assistant', content: errMsg }])
+   370→   370→    } finally {
+   371→   371→      setLoading(false)
+   372→   372→      setProgressSteps([])
+   373→   373→      // Clear refs so they can be GC'd
+   374→   374→      abortRef.current = null
+   375→   375→      readerRef.current = null
+   376→   376→    }
+   377→   377→  }
+   378→   378→
+   379→   379→  // Cleanup: cancel any in-flight AI request on unmount (prevents memory leak & zombie stream)
+   380→   380→  useEffect(() => {
+   381→   381→    return () => {
+   382→   382→      if (abortRef.current) {
+   383→   383→        try { abortRef.current.abort() } catch { /* already aborted — ignore */ }
+   384→   384→        abortRef.current = null
+   385→   385→      }
+   386→   386→      if (readerRef.current) {
+   387→   387→        try { readerRef.current.cancel() } catch { /* stream already closed — ignore */ }
+   388→   388→        readerRef.current = null
+   389→   389→      }
+   390→   390→    }
+   391→   391→  }, [])
+   392→   392→
+   393→   393→  const regenerate = (idx: number) => {
+   394→   394→    const history = messages.slice(0, idx)
+   395→   395→    const lastUser = history[history.length - 1]
+   396→   396→    if (lastUser && lastUser.role === 'user') {
+   397→   397→      setMessages(history.slice(0, -1))
+   398→   398→      sendMessage(lastUser.content)
+   399→   399→    }
+   400→   400→  }
+   401→   401→
+   402→   402→  const handleKeyDown = (e: React.KeyboardEvent) => {
+   403→   403→    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
+   404→   404→  }
+   405→   405→
+   406→   406→  return (
+   407→   407→    <div className="flex h-full flex-col bg-[var(--side-bar-bg)]">
+   408→   408→      {/* Header */}
+   409→   409→      <div className={cn('flex items-center justify-between border-b border-[var(--editor-border)]', isMobile ? 'h-12 px-2 md:hidden' : 'h-9 px-3')}>
+   410→   410→        <div className="flex items-center gap-2">
+   411→   411→          {isMobile && onClose && (
+   412→   412→            <button onClick={() => { haptic(10); onClose() }} className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground active:bg-[var(--list-hover)]" aria-label="Close">
+   413→   413→              <ArrowLeft className="h-5 w-5" />
+   414→   414→            </button>
+   415→   415→          )}
+   416→   416→          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--list-hover)]">
+   417→   417→            <Bot className="h-4 w-4" />
+   418→   418→          </div>
+   419→   419→          <div className="flex flex-col">
+   420→   420→            <span className={cn('font-semibold', isMobile ? 'text-sm' : 'text-xs uppercase tracking-wide')}>
+   421→   421→              ZCode AI {mode === 'agent' && <span className="ml-1 rounded bg-foreground px-1.5 py-0.5 text-[9px] text-background">AGENT</span>}
+   422→   422→            </span>
+   423→   423→            {isMobile && activeFile && <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">{activeFile.name}</span>}
+   424→   424→          </div>
+   425→   425→        </div>
+   426→   426→        <div className="flex items-center gap-1">
+   427→   427→          <button
+   428→   428→            onClick={handleNewChat}
+   429→   429→            title="New Chat"
+   430→   430→            className={cn(
+   431→   431→              'flex items-center gap-1 rounded-full text-muted-foreground active:bg-[var(--list-hover)] hover:bg-[var(--list-hover)] hover:text-foreground transition-colors',
+   432→   432→              isMobile ? 'h-9 px-2.5' : 'h-7 px-2'
+   433→   433→            )}
+   434→   434→            aria-label="New Chat"
+   435→   435→          >
+   436→   436→            <MessageSquarePlus className={isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5'} />
+   437→   437→            {!isMobile && <span className="text-[10px] font-medium uppercase tracking-wide">New</span>}
+   438→   438→          </button>
+   439→   439→          {messages.length > 0 && (
+   440→   440→            <button
+   441→   441→              onClick={handleDeleteChat}
+   442→   442→              title="Delete Chat"
+   443→   443→              className={cn(
+   444→   444→                'flex items-center justify-center rounded-full text-muted-foreground active:bg-[var(--list-hover)] hover:bg-[var(--list-hover)] hover:text-foreground transition-colors',
+   445→   445→                isMobile ? 'h-9 w-9' : 'h-7 w-7'
+   446→   446→              )}
+   447→   447→              aria-label="Delete Chat"
+   448→   448→            >
+   449→   449→              <Trash2 className={isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5'} />
+   450→   450→            </button>
+   451→   451→          )}
+   452→   452→          {!isMobile && onClose && (
+   453→   453→            <button onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--list-hover)]" aria-label="Close">
+   454→   454→              <X className="h-4 w-4" />
+   455→   455→            </button>
+   456→   456→          )}
+   457→   457→        </div>
+   458→   458→      </div>
+   459→   459→
+   460→   460→      {/* Messages */}
+   461→   461→      <div ref={viewportRef} className="flex-1 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
+   462→   462→        <div className={cn('p-3', isMobile && 'pb-4')}>
+   463→   463→          {messages.length === 0 ? (
+   464→   464→            <div className="flex flex-col items-center justify-center py-4 text-center md:py-6">
+   465→   465→              <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--list-hover)] md:mb-4">
+   466→   466→                <Brain className="h-7 w-7" />
+   467→   467→              </div>
+   468→   468→              <h3 className="mb-1 text-sm font-semibold md:text-base">ZCode AI</h3>
+   469→   469→              <p className="mb-4 max-w-[260px] text-xs text-muted-foreground md:mb-5 md:text-sm">
+   470→   470→                {mode === 'agent'
+   471→   471→                  ? 'Agent mode. AI berpikir terlebih dahulu, lalu menulis kode langsung ke file. Contoh: "buat game ular" atau "buat dalam bahasa Indonesia"'
+   472→   472→                  : 'Chat biasa. Tanya apa saja. Untuk edit file langsung, ganti ke mode Agent di bawah.'
+   473→   473→                }
+   474→   474→              </p>
+   475→   475→              <div className="grid w-full grid-cols-2 gap-2">
+   476→   476→                {quickActions.map(action => {
+   477→   477→                  const Icon = action.icon
+   478→   478→                  return (
+   479→   479→                    <button key={action.text} onClick={() => { haptic(10); sendMessage(action.prompt, action) }}
+   480→   480→                      className={cn('flex items-center gap-2 rounded-xl border border-[var(--editor-border)] bg-[var(--input-bg)] px-2.5 py-2.5 text-left text-xs transition-all active:scale-[0.98] hover:border-[var(--list-active)]', isMobile && 'min-h-[44px]')}>
+   481→   481→                      <Icon className="h-4 w-4 shrink-0" />
+   482→   482→                      <span className="font-medium">{action.text}</span>
+   483→   483→                    </button>
+   484→   484→                  )
+   485→   485→                })}
+   486→   486→              </div>
+   487→   487→            </div>
+   488→   488→          ) : (
+   489→   489→            <div className="space-y-3 md:space-y-4">
+   490→   490→              {messages.map((msg, i) => (
+   491→   491→                <MessageBubble key={i} message={msg} isMobile={isMobile} onRegenerate={msg.role === 'assistant' && i === messages.length - 1 && !loading ? () => regenerate(i) : undefined} />
+   492→   492→              ))}
+   493→   493→
+   494→   494→              {/* Progress steps */}
+   495→   495→              {loading && progressSteps.length > 0 && (
+   496→   496→                <div className="flex gap-2">
+   497→   497→                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--list-hover)]">
+   498→   498→                    <Terminal className="h-4 w-4" />
+   499→   499→                  </div>
+   500→   500→                  <div className="flex-1 rounded-2xl rounded-tl-sm bg-[var(--input-bg)] px-3 py-2.5">
+   501→   501→                    <div className="space-y-1.5">
+   502→   502→                      {progressSteps.map((step, idx) => (
+   503→   503→                        <div key={idx} className="flex items-center gap-2 text-[13px]">
+   504→   504→                          {step.done ? <Check className="h-3.5 w-3.5 shrink-0 text-foreground" /> : <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />}
+   505→   505→                          <span className={step.done ? 'text-muted-foreground' : 'text-foreground'}>{step.text}</span>
+   506→   506→                        </div>
+   507→   507→                      ))}
+   508→   508→                    </div>
+   509→   509→                  </div>
+   510→   510→                </div>
+   511→   511→              )}
+   512→   512→
+   513→   513→              {/* Normal loading */}
+   514→   514→              {loading && progressSteps.length === 0 && (
+   515→   515→                <div className="flex items-center gap-2 rounded-lg bg-[var(--input-bg)] px-3 py-2.5 text-xs text-muted-foreground">
+   516→   516→                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+   517→   517→                  <span>AI sedang berpikir...</span>
+   518→   518→                  <span className="ml-auto flex gap-1">
+   519→   519→                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+   520→   520→                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+   521→   521→                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+   522→   522→                  </span>
+   523→   523→                </div>
+   524→   524→              )}
+   525→   525→            </div>
+   526→   526→          )}
+   527→   527→        </div>
+   528→   528→      </div>
+   529→   529→
+   530→   530→      {/* Context */}
+   531→   531→      {activeFile && !isMobile && (
+   532→   532→        <div className="flex items-center gap-1.5 border-t border-[var(--editor-border)] px-3 py-1.5 text-[10px] text-muted-foreground">
+   533→   533→          <Code2 className="h-3 w-3 shrink-0" />
+   534→   534→          <span className="truncate">Context: {activeFile.name}</span>
+   535→   535→          {memoryCount > 0 && <span className="ml-auto"> Memory: {memoryCount}</span>}
+   536→   536→        </div>
+   537→   537→      )}
+   538→   538→
+   539→   539→      {/* Mode toggle + Input */}
+   540→   540→      <div className={cn('border-t border-[var(--editor-border)] bg-[var(--side-bar-bg)]', isMobile ? 'p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]' : 'p-3')}>
+   541→   541→        {/* Mode Toggle */}
+   542→   542→        <div className="mb-2 flex gap-1 rounded-lg bg-[var(--input-bg)] p-1">
+   543→   543→          <button onClick={() => { haptic(10); setMode('normal') }} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all', mode === 'normal' ? 'bg-[var(--list-hover)] text-foreground' : 'text-muted-foreground')}>
+   544→   544→            <ChatIcon className="h-3.5 w-3.5" /> Normal
+   545→   545→          </button>
+   546→   546→          <button onClick={() => { haptic(10); setMode('agent') }} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all', mode === 'agent' ? 'bg-foreground text-background' : 'text-muted-foreground')}>
+   547→   547→            <Terminal className="h-3.5 w-3.5" /> Agent
+   548→   548→          </button>
+   549→   549→        </div>
+   550→   550→
+   551→   551→        {/* Input */}
+   552→   552→        <div className="relative">
+   553→   553→          <Textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
+   554→   554→            placeholder={mode === 'agent' ? (isMobile ? "Perintah agent..." : "Ketik perintah... (mis: buat game ular)") : (isMobile ? "Tanya AI apa saja..." : "Ajak AI ngol, tanya apa saja...")}
+   555→   555→            className={cn('resize-none bg-[var(--input-bg)] pr-12 text-[13px]', isMobile ? 'min-h-[52px] max-h-[120px]' : 'min-h-[56px] max-h-[140px]')}
+   556→   556→            rows={isMobile ? 2 : 3} maxLength={4000} />
+   557→   557→          <Button size="icon" onClick={() => sendMessage()} disabled={!input.trim() || loading} className={cn('absolute bottom-2 right-2 shrink-0', isMobile ? 'h-9 w-9' : 'h-7 w-7')} aria-label="Send">
+   558→   558→            <Send className={isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5'} />
+   559→   559→          </Button>
+   560→   560→        </div>
+   561→   561→      </div>
+   562→   562→    </div>
+   563→   563→  )
+   564→   564→}
+   565→   565→
+   566→   566→function ChatIcon({ className }: { className?: string }) {
+   567→   567→  return <svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+   568→   568→}
+   569→   569→
+   570→   570→interface MessageBubbleProps { message: ChatMessage; isMobile: boolean; onRegenerate?: () => void }
+   571→   571→
+   572→   572→function MessageBubble({ message, isMobile, onRegenerate }: MessageBubbleProps) {
+   573→   573→  const isUser = message.role === 'user'
+   574→   574→
+   575→   575→  if (message.isAgentDone && !isUser) {
+   576→   576→    return (
+   577→   577→      <div className="flex gap-2">
+   578→   578→        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground">
+   579→   579→          <Check className="h-4 w-4 text-background" />
+   580→   580→        </div>
+   581→   581→        <div className="flex-1 space-y-2">
+   582→   582→          {message.thinkingSteps && message.thinkingSteps.length > 0 && (
+   583→   583→            <div className="rounded-xl bg-[var(--input-bg)] px-3 py-2 text-[11px] text-muted-foreground">
+   584→   584→              <div className="mb-1 flex items-center gap-1 font-medium">
+   585→   585→                <Brain className="h-3 w-3" /> Proses berpikir:
+   586→   586→              </div>
+   587→   587→              {message.thinkingSteps.map((step, i) => (
+   588→   588→                <div key={i} className="ml-3">• {step}</div>
+   589→   589→              ))}
+   590→   590→            </div>
+   591→   591→          )}
+   592→   592→          <div className="rounded-2xl rounded-tl-sm bg-[var(--input-bg)] px-3 py-2.5 text-[13px] leading-relaxed">
+   593→   593→            <p className="whitespace-pre-wrap break-words font-medium">{message.content}</p>
+   594→   594→            {message.appliedFiles && message.appliedFiles.length > 0 && (
+   595→   595→              <div className="mt-2 space-y-1 border-t border-[var(--editor-border)] pt-2">
+   596→   596→                {message.appliedFiles.map((f, i) => (
+   597→   597→                  <div key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+   598→   598→                    <FileCode className="h-3 w-3" /><span>{f}</span>
+   599→   599→                  </div>
+   600→   600→                ))}
+   601→   601→              </div>
+   602→   602→            )}
+   603→   603→          </div>
+   604→   604→        </div>
+   605→   605→      </div>
+   606→   606→    )
+   607→   607→  }
+   608→   608→
+   609→   609→  const parts = message.content.split(/(```[\w]*\n[\s\S]*?```)/g)
+   610→   610→
+   611→   611→  return (
+   612→   612→    <div className={cn('flex gap-2', isUser && 'flex-row-reverse')}>
+   613→   613→      <div className={cn('flex shrink-0 items-center justify-center rounded-full', isMobile ? 'h-8 w-8' : 'h-7 w-7', isUser ? 'bg-[var(--input-bg)]' : 'bg-[var(--list-hover)]')}>
+   614→   614→        {isUser ? <User className={isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5'} /> : <Bot className={isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5'} />}
+   615→   615→      </div>
+   616→   616→      <div className={cn('flex-1 space-y-1.5', isUser && 'max-w-[85%]')}>
+   617→   617→        <div className={cn('rounded-2xl px-3 py-2 text-[13px] leading-relaxed', isUser ? 'bg-[var(--primary)] text-[var(--primary-foreground)] rounded-tr-sm' : 'bg-[var(--input-bg)] rounded-tl-sm')}>
+   618→   618→          {parts.map((part, i) => {
+   619→   619→            if (part.startsWith('```')) {
+   620→   620→              const match = part.match(/```(\w*)\n([\s\S]*?)```/)
+   621→   621→              if (match) return <CodeBlock key={i} code={match[2]} lang={match[1] || 'text'} isMobile={isMobile} />
+   622→   622→            }
+   623→   623→            return <p key={i} className="whitespace-pre-wrap break-words">{part}</p>
+   624→   624→          })}
+   625→   625→        </div>
+   626→   626→        {!isUser && onRegenerate && (
+   627→   627→          <button onClick={onRegenerate} className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] text-muted-foreground hover:bg-[var(--list-hover)] hover:text-foreground active:scale-95">
+   628→   628→            <RefreshCw className="h-3 w-3" /><span>Regenerate</span>
+   629→   629→          </button>
+   630→   630→        )}
+   631→   631→      </div>
+   632→   632→    </div>
+   633→   633→  )
+   634→   634→}
+   635→   635→
+   636→   636→function CodeBlock({ code, lang, isMobile }: { code: string; lang: string; isMobile: boolean }) {
+   637→   637→  const [copied, setCopied] = useState(false)
+   638→   638→  const handleCopy = () => {
+   639→   639→    navigator.clipboard?.writeText(code)
+   640→   640→    setCopied(true)
+   641→   641→    if (isMobile && 'vibrate' in navigator) try { navigator.vibrate(15) } catch { /* Vibration API not supported — ignore */ }
+   642→   642→    toast.success('Code disalin')
+   643→   643→    setTimeout(() => setCopied(false), 2000)
+   644→   644→  }
+   645→   645→  return (
+   646→   646→    <div className="my-2 overflow-hidden rounded-lg border border-[var(--editor-border)]">
+   647→   647→      <div className="flex items-center justify-between border-b border-[var(--editor-border)] bg-[var(--list-hover)] px-2.5 py-1.5">
+   648→   648→        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{lang}</span>
+   649→   649→        <button onClick={handleCopy} className={cn('flex items-center gap-1 rounded-full text-[10px] font-medium transition-colors active:scale-95', isMobile ? 'px-2.5 py-1 min-h-[28px]' : 'px-2 py-0.5', copied ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+   650→   650→          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+   651→   651→          <span>{copied ? 'Copied' : 'Copy'}</span>
+   652→   652→        </button>
+   653→   653→      </div>
+   654→   654→      <pre className="overflow-x-auto bg-[var(--editor-bg)] p-2.5 text-[12px] leading-relaxed">
+   655→   655→        <code className={`language-${lang}`}>{code}</code>
+   656→   656→      </pre>
+   657→   657→    </div>
+   658→   658→  )
+   659→   659→}
+   660→   660→

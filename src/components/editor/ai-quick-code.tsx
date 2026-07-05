@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Zap, X, Send, Loader2, Copy, Check, ChevronDown, ChevronUp, Code2 } from 'lucide-react'
+import { Zap, X, Send, Loader2, Copy, Check, ChevronDown, ChevronUp, Code2, Square } from 'lucide-react'
 import { useEditorStore } from '@/store/editor-store'
 import { cn } from '@/lib/utils'
 import { Textarea } from '@/components/ui/textarea'
@@ -18,6 +18,8 @@ export function AiQuickCode() {
   const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState(true)
   const viewportRef = useRef<HTMLDivElement>(null)
+  // Abort in-flight request when dialog closes / new send / unmount
+  const abortRef = useRef<AbortController | null>(null)
   const activeTabId = useEditorStore(s => s.activeTabId)
   const openTabs = useEditorStore(s => s.openTabs)
   const files = useEditorStore(s => s.files)
@@ -27,6 +29,25 @@ export function AiQuickCode() {
 
   useEffect(() => { if (viewportRef.current) viewportRef.current.scrollTop = viewportRef.current.scrollHeight }, [messages, loading])
 
+  // Cancel any in-flight request when dialog closes (prevents zombie stream + wasted tokens)
+  useEffect(() => {
+    if (!open && abortRef.current) {
+      try { abortRef.current.abort() } catch { /* already aborted */ }
+      abortRef.current = null
+      setLoading(false)
+    }
+  }, [open])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) {
+        try { abortRef.current.abort() } catch { /* already aborted */ }
+        abortRef.current = null
+      }
+    }
+  }, [])
+
   const send = async () => {
     const content = input.trim()
     if (!content || loading) return
@@ -34,14 +55,46 @@ export function AiQuickCode() {
     const base = [...messages, { role: 'user' as const, content }]
     setMessages(base)
     setLoading(true)
+
+    // Cancel any previous in-flight request
+    if (abortRef.current) {
+      try { abortRef.current.abort() } catch { /* already aborted */ }
+    }
+    const controller = new AbortController()
+    abortRef.current = controller
+
     try {
       const ctx = activeFile ? `File: ${activeFile.name}\nLanguage: ${activeFile.language}\n\n\`\`\`${activeFile.language}\n${activeFile.content || '(empty)'}\n\`\`\`` : undefined
-      const res = await fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: base.map(m => ({ role: m.role, content: m.content })), context: ctx }) })
-      if (!res.ok) throw new Error('failed')
+      const res = await fetch('/api/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: base.map(m => ({ role: m.role, content: m.content })), context: ctx }),
+        signal: controller.signal,
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setMessages([...base, { role: 'assistant', content: data.reply }])
-    } catch { setMessages([...base, { role: 'assistant', content: 'Terjadi kesalahan. Coba lagi.' }]) }
-    finally { setLoading(false) }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        // Silent on user-initiated cancel — don't pollute chat history
+        setMessages(base)
+      } else {
+        toast.error('Gagal terhubung ke AI. Coba lagi.')
+        setMessages([...base, { role: 'assistant', content: 'Terjadi kesalahan. Coba lagi.' }])
+      }
+    }
+    finally {
+      setLoading(false)
+      abortRef.current = null
+    }
+  }
+
+  const handleCancel = () => {
+    if (abortRef.current) {
+      try { abortRef.current.abort() } catch { /* already aborted */ }
+      abortRef.current = null
+    }
+    setLoading(false)
   }
 
   if (!open) return null
@@ -53,11 +106,11 @@ export function AiQuickCode() {
           <div className="flex items-center gap-2">
             <div className="flex h-6 w-6 items-center justify-center rounded-md bg-purple-500/20"><Zap className="h-3.5 w-3.5 text-purple-400" /></div>
             <span className="text-xs font-semibold">AI Quick Code</span>
-            {messages.length > 0 && <button onClick={() => { setMessages([]); toast.success('Chat dihapus') }} className="rounded p-1 text-muted-foreground hover:bg-[var(--list-hover)]"><X className="h-3 w-3" /></button>}
+            {messages.length > 0 && <button onClick={() => { setMessages([]); toast.success('Chat dihapus') }} className="rounded p-1 text-muted-foreground hover:bg-[var(--list-hover)]" title="Hapus chat"><X className="h-3 w-3" /></button>}
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={() => setExpanded(!expanded)} className="rounded p-1 text-muted-foreground hover:bg-[var(--list-hover)]">{expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}</button>
-            <button onClick={() => setOpen(false)} className="rounded p-1 text-muted-foreground hover:bg-[var(--list-hover)]"><X className="h-3.5 w-3.5" /></button>
+            <button onClick={() => setExpanded(!expanded)} className="rounded p-1 text-muted-foreground hover:bg-[var(--list-hover)]" title={expanded ? 'Lipat' : 'Buka'}>{expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}</button>
+            <button onClick={() => setOpen(false)} className="rounded p-1 text-muted-foreground hover:bg-[var(--list-hover)]" title="Tutup"><X className="h-3.5 w-3.5" /></button>
           </div>
         </div>
         {expanded && (
@@ -76,7 +129,18 @@ export function AiQuickCode() {
               ) : (
                 <div className="space-y-2.5">
                   {messages.map((msg, i) => <QMsg key={i} message={msg} />)}
-                  {loading && <div className="flex items-center gap-2 rounded-lg bg-[var(--input-bg)] px-3 py-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /><span>AI sedang menulis...</span></div>}
+                  {loading && (
+                    <div className="flex items-center justify-between gap-2 rounded-lg bg-[var(--input-bg)] px-3 py-2 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>AI sedang menulis...</span>
+                      </div>
+                      <button onClick={handleCancel} className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground" title="Batalkan">
+                        <Square className="h-2.5 w-2.5 fill-current" />
+                        <span>Stop</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

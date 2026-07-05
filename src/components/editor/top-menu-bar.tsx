@@ -14,6 +14,7 @@ import { useEditorStore } from '@/store/editor-store'
 import { useFileOperations } from '@/hooks/use-file-operations'
 import { promptFileName, promptFolderName } from '@/components/editor/prompt-dialog'
 import { BugScanDialog } from '@/components/editor/bug-scan-dialog'
+import { AboutDialog } from '@/components/editor/about-dialog'
 import { toast } from 'sonner'
 
 export function TopMenuBar() {
@@ -36,6 +37,7 @@ export function TopMenuBar() {
   const activeTabId = useEditorStore(s => s.activeTabId)
   const openTabs = useEditorStore(s => s.openTabs)
   const [scanOpen, setScanOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
 
   const { openFromDeviceFSAccess, saveToDevice, saveAsToDevice, saveAllToDevice } = useFileOperations()
 
@@ -239,7 +241,7 @@ export function TopMenuBar() {
               <span className="ml-auto text-xs text-muted-foreground">?</span>
             </MenubarItem>
             <MenubarSeparator />
-            <MenubarItem onClick={() => toast.info('ZCode Studio v2.4')}>
+            <MenubarItem onClick={() => setAboutOpen(true)}>
               <HelpCircle className="mr-2 h-4 w-4" />
               <span>Tentang</span>
             </MenubarItem>
@@ -328,6 +330,7 @@ export function TopMenuBar() {
 
       {/* Bug Scan Dialog */}
       <BugScanDialog open={scanOpen} onOpenChange={setScanOpen} />
+      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
     </div>
   )
 }

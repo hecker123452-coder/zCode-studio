@@ -172,13 +172,13 @@ export function LivePreview({ fileId, isMobile = false, onClose }: LivePreviewPr
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          {/* Device selector */}
+          {/* Device selector — touch targets enlarged on mobile (was h-5 w-5 = 20px, below 44px iOS minimum) */}
           <div className="flex items-center gap-0.5 rounded border border-[var(--editor-border)] p-0.5">
             <Button
               size="icon"
               variant="ghost"
               onClick={() => setDevice('desktop')}
-              className={cn(isMobile ? 'h-7 w-7' : 'h-5 w-5', device === 'desktop' && 'bg-[var(--list-hover)]')}
+              className={cn(isMobile ? 'h-8 w-8' : 'h-5 w-5', device === 'desktop' && 'bg-[var(--list-hover)]')}
               title="Desktop"
             >
               <Monitor className="h-3 w-3" />
@@ -187,7 +187,7 @@ export function LivePreview({ fileId, isMobile = false, onClose }: LivePreviewPr
               size="icon"
               variant="ghost"
               onClick={() => setDevice('tablet')}
-              className={cn(isMobile ? 'h-7 w-7' : 'h-5 w-5', device === 'tablet' && 'bg-[var(--list-hover)]')}
+              className={cn(isMobile ? 'h-8 w-8' : 'h-5 w-5', device === 'tablet' && 'bg-[var(--list-hover)]')}
               title="Tablet"
             >
               <Tablet className="h-3 w-3" />
@@ -196,7 +196,7 @@ export function LivePreview({ fileId, isMobile = false, onClose }: LivePreviewPr
               size="icon"
               variant="ghost"
               onClick={() => setDevice('mobile')}
-              className={cn(isMobile ? 'h-7 w-7' : 'h-5 w-5', device === 'mobile' && 'bg-[var(--list-hover)]')}
+              className={cn(isMobile ? 'h-8 w-8' : 'h-5 w-5', device === 'mobile' && 'bg-[var(--list-hover)]')}
               title="Mobile"
             >
               <Smartphone className="h-3 w-3" />
@@ -206,7 +206,7 @@ export function LivePreview({ fileId, isMobile = false, onClose }: LivePreviewPr
           <Button
             size="icon"
             variant="ghost"
-            className={isMobile ? 'h-7 w-7' : 'h-5 w-5'}
+            className={isMobile ? 'h-8 w-8' : 'h-5 w-5'}
             onClick={handleRefresh}
             title="Refresh"
           >
@@ -216,7 +216,7 @@ export function LivePreview({ fileId, isMobile = false, onClose }: LivePreviewPr
           <Button
             size="icon"
             variant="ghost"
-            className={isMobile ? 'h-7 w-7' : 'h-5 w-5'}
+            className={isMobile ? 'h-8 w-8' : 'h-5 w-5'}
             onClick={handleOpenExternal}
             title="Open in new tab"
           >

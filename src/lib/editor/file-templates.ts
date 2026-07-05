@@ -359,7 +359,7 @@ fungsi sapa(nama) {
 }
 
 untuk (variabel i = 0; i < 3; i++) {
-    sapa(nome + " ke-" + (i + 1))
+    sapa(nama + " ke-" + (i + 1))
 }
 
 tampilkan("Selesai!")

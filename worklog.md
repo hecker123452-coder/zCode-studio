@@ -47,3 +47,66 @@ Stage Summary:
 - ✅ Dev server auto-restartable via .zscripts/dev.sh
 - ✅ Lint passes with zero errors
 - The project is ready for the user to access via the Space Z AI preview link.
+
+---
+Task ID: 2
+Agent: main-agent (Super Z)
+Task: Update ZCode Studio — perbaiki bug yang ada + bagusin fitur.
+
+Work Log:
+- Audited codebase via grep + file reads across 8 components (page.tsx, ai-assistant.tsx, ai-code-helper.tsx, ai-quick-code.tsx, run-panel.tsx, code-editor.tsx, top-menu-bar.tsx, live-preview.tsx, status-bar.tsx, deploy-dialog.tsx, file-templates.ts, snippets-panel.tsx, layout.tsx, api/ai/route.ts, api/deploy/route.ts).
+- Checked dev.log — no runtime errors. Only one deployment warning about telemetry.
+- Identified 4 critical bugs + 5 UX improvements.
+
+BUG FIXES:
+1. AI Assistant memory double/triple-push bug (ai-assistant.tsx):
+   - memoryRef.current.push() was called up to 3× per message (line 301 after stream, line 334 in agent mode, line 354 in normal mode). Caused memory growth ×3 and inaccurate count badge.
+   - Fix: removed the always-push at line 301; kept single push in agent-success branch and single push in normal/fallback branch.
+2. AI Assistant timeout leak on error path (ai-assistant.tsx):
+   - clearTimeout(timeoutId) was only called on success path (line 294). On error (catch block), the 120s timeout would still fire later, calling controller.abort() on an already-settled request — wasted resources.
+   - Fix: introduced abortTimeoutRef, clear it in finally block, on new message, and on unmount.
+3. IndoCode template typo (file-templates.ts):
+   - Template "IndoCode Script" had `sapa(nome + ...)` but variable was declared as `nama`. New users would get a broken template.
+   - Fix: changed `nome` → `nama`.
+4. Layout favicon external URL (layout.tsx):
+   - Favicon pointed to https://z-cdn.chatglm.cn/z-ai/static/logo.svg — wouldn't work outside Space Z AI platform.
+   - Fix: changed to "/logo.svg" (local public asset).
+
+FEATURE IMPROVEMENTS:
+5. AI Quick Code: abort handling + error toast + cancel button (ai-quick-code.tsx):
+   - Previously had no AbortController — closing dialog or starting new request left zombie fetch running.
+   - Now: cancels in-flight on dialog close, on new send, on unmount. Added Stop button in loading state. Added toast on network error (was silent before).
+6. StatusBar: real selection count + online/offline status + tabSize from settings (status-bar.tsx):
+   - `selection` state was initialized but never updated — always null.
+   - `Wifi` icon was static, didn't reflect actual online/offline.
+   - "Spaces: 2" was hardcoded — ignored settings.tabSize.
+   - Fix: added polling for Monaco selection (300ms), navigator.onLine + online/offline event listeners, and `settings.tabSize` for indentation display.
+7. About modal (new file: about-dialog.tsx):
+   - Previously "Bantuan → Tentang" just showed a toast with version. Now opens a real modal with: app icon, version, description, feature grid (AI Assistant / IndoCode Runner / Bug Scanner / Deploy), tech stack chips (Next.js 16, React 19, TypeScript, Monaco, Tailwind 4, shadcn/ui, Prisma, Zustand, z-ai-web-dev-sdk), and MIT license footer.
+   - Integrated into TopMenuBar via useState + AboutDialog component.
+8. AI Assistant streaming UX (ai-assistant.tsx):
+   - "AI sedang menulis..." step was marked done=true on first chunk — misleading (implies finished when actually still streaming).
+   - Fix: marked done=false until stream completes (cleared by finally block).
+9. Live Preview mobile touch targets (live-preview.tsx):
+   - Device picker buttons were h-7 w-7 (28px) on mobile — below iOS 44px minimum touch target.
+   - Fix: enlarged to h-8 w-8 (32px) for desktop/tablet/mobile buttons, refresh button, and external link button on mobile.
+
+VERIFICATION:
+- bun run lint: 0 errors.
+- Dev server hot-reloaded successfully (✓ Compiled in 186ms).
+- curl http://localhost:3000/ → HTTP 200.
+- curl POST /api/ai → HTTP 200 with valid reply.
+- agent-browser end-to-end:
+  - Page renders correctly with all 11 files visible.
+  - Bantuan → Tentang opens About modal with all expected content (version, features, tech stack, MIT).
+  - AI Assistant: message "test: 1+1 = ?" → response "1+1 = 2" (Regenerate button visible).
+  - AI Quick Code: message "buatin fungsi capitalize" → streaming response with Python code block + Salin button.
+  - StatusBar: title attributes confirm "Spaces: 2" (from settings), "Online" (from navigator.onLine), "11 files" (real count).
+
+Stage Summary:
+- ✅ 4 bugs fixed (memory leak, timeout leak, template typo, favicon)
+- ✅ 5 UX/feature improvements (Quick Code abort, StatusBar real stats, About modal, streaming UX, mobile touch)
+- ✅ Lint clean (0 errors)
+- ✅ Dev server healthy, AI features verified end-to-end
+- ✅ Project still deployable — no breaking changes
+- Screenshots saved to /home/z/my-project/download/: zcode-about-dialog.png, zcode-quick-code.png
