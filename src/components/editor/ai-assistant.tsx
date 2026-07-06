@@ -6,7 +6,7 @@ import {
   Lightbulb, Bug, BookOpen, Wand2, ArrowLeft, X, Copy, Check,
   RefreshCw, Wrench, FileCode, Zap, ClipboardList, GitBranch,
   FileSearch, GraduationCap, ArrowLeftRight, Terminal, Brain,
-  PlusSquare, MessageSquarePlus,
+  PlusSquare, MessageSquarePlus, Globe, ChevronRight,
   type LucideIcon,
 } from 'lucide-react'
 import { useEditorStore } from '@/store/editor-store'
@@ -14,10 +14,13 @@ import { cn } from '@/lib/utils'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
+import { buildProjectContext } from '@/lib/ai/context-builder'
+import { parseAgentFiles, parseThinkingSteps } from '@/lib/ai/prompts'
 
 interface ProgressStep {
   text: string
   done: boolean
+  icon?: LucideIcon
 }
 
 interface ChatMessage {
@@ -26,6 +29,8 @@ interface ChatMessage {
   isAgentDone?: boolean
   appliedFiles?: string[]
   thinkingSteps?: string[]
+  reasoning?: string
+  usedWebSearch?: boolean
 }
 
 interface QuickAction {
@@ -51,34 +56,7 @@ interface AIAssistantProps {
   isMobile?: boolean
 }
 
-// Parse agent response to extract file actions
-function parseAgentFiles(reply: string, defaultFileName: string): { fileName: string, content: string }[] {
-  const actions: { fileName: string, content: string }[] = []
-  // Match code blocks with filename: ```lang:filename
-  const fileRegex = /```[\w]*:(\S+)\n([\s\S]*?)```/g
-  let match
-  while ((match = fileRegex.exec(reply)) !== null) {
-    actions.push({ fileName: match[1], content: match[2] })
-  }
-  // If no filename blocks, try regular code blocks
-  if (actions.length === 0) {
-    const codeRegex = /```[\w]*\n([\s\S]*?)```/g
-    while ((match = codeRegex.exec(reply)) !== null) {
-      if (match[1].split('\n').length > 3) {
-        actions.push({ fileName: defaultFileName, content: match[1] })
-        break
-      }
-    }
-  }
-  return actions
-}
-
-// Extract thinking steps from reply (bullet points before code blocks)
-function parseThinkingSteps(reply: string): string[] {
-  const beforeCode = reply.split(/```/)[0] || ''
-  const lines = beforeCode.split('\n').filter(l => l.trim().startsWith('-') || l.trim().startsWith('•'))
-  return lines.map(l => l.trim().replace(/^[-•]\s*/, '')).filter(l => l.length > 0)
-}
+// (parseAgentFiles & parseThinkingSteps now imported from @/lib/ai/prompts)
 
 export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -87,9 +65,12 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
   const [mode, setMode] = useState<'normal' | 'agent'>('normal')
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([])
   const [memoryCount, setMemoryCount] = useState(0)
+  const [currentPhase, setCurrentPhase] = useState<'idle' | 'connecting' | 'thinking' | 'searching' | 'writing' | 'applying' | 'done'>('idle')
+  const [liveReasoning, setLiveReasoning] = useState<string>('')
   const viewportRef = useRef<HTMLDivElement>(null)
   const memoryRef = useRef<string[]>([])
   const replyRef = useRef<string>('')
+  const reasoningRef = useRef<string>('')
   // Track the current AbortController so we can cancel on unmount / new chat / new message
   const abortRef = useRef<AbortController | null>(null)
   // Track the abort timeout so we can clear it in finally (was previously leaked on error path)
@@ -99,6 +80,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
   const activeTabId = useEditorStore(s => s.activeTabId)
   const openTabs = useEditorStore(s => s.openTabs)
   const files = useEditorStore(s => s.files)
+  const rootFileIds = useEditorStore(s => s.rootFileIds)
   const updateFileContent = useEditorStore(s => s.updateFileContent)
   const createFile = useEditorStore(s => s.createFile)
   const openTab = useEditorStore(s => s.openTab)
@@ -134,6 +116,10 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
     haptic(15)
     setMessages([])
     setProgressSteps([])
+    setCurrentPhase('idle')
+    setLiveReasoning('')
+    reasoningRef.current = ''
+    replyRef.current = ''
     memoryRef.current = []
     setMemoryCount(0)
     setInput('')
@@ -147,6 +133,10 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
     if (confirm('Hapus semua percakapan? Tindakan ini tidak dapat dibatalkan.')) {
       setMessages([])
       setProgressSteps([])
+      setCurrentPhase('idle')
+      setLiveReasoning('')
+      reasoningRef.current = ''
+      replyRef.current = ''
       memoryRef.current = []
       setMemoryCount(0)
       setInput('')
@@ -180,39 +170,36 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
     setMessages(baseMessages)
     setLoading(true)
     setProgressSteps([])
+    setCurrentPhase('connecting')
+    setLiveReasoning('')
+    reasoningRef.current = ''
 
     const useAgentMode = mode === 'agent' && !action?.mode
     const useFixMode = action?.mode === 'fix'
     const useTutorMode = action?.mode === 'tutor'
     const useConvertMode = action?.mode === 'convert-js' ? 'indo-to-js' : action?.mode === 'convert-indo' ? 'js-to-indo' : undefined
 
-    // Real progress: show "menghubungkan" status
-    setProgressSteps([{ text: 'Menghubungkan ke AI...', done: false }])
+    // Phase-aware progress indicator
+    setProgressSteps([{ text: 'Menghubungkan ke AI...', done: false, icon: Zap }])
 
     try {
-      const context = activeFile
-        ? `File: ${activeFile.name}\nLanguage: ${activeFile.language}\n\n\`\`\`${activeFile.language}\n${activeFile.content || '(empty file)'}\n\`\`\``
-        : undefined
+      // Build rich project context (file tree + active file + related files)
+      const projectContext = buildProjectContext({
+        files,
+        rootIds: rootFileIds,
+        activeFileId: activeFile?.id,
+        maxRelatedFiles: 3,
+        maxFileContentChars: 6000,
+      })
 
       const memoryContext = memoryRef.current.length > 0
-        ? `\n\n=== MEMORY (belajar dari percakapan sebelumnya) ===\n${memoryRef.current.join('\n')}`
-        : ''
+        ? memoryRef.current.slice(-5) : []
 
-      const allFiles = Object.values(files).filter(f => f.type === 'file')
-      const projectFilesForAI = (useAgentMode || useFixMode || useConvertMode) ? [] : allFiles
-        .filter(f => f.content && f.content.length > 0)
-        .slice(0, 5)
-        .map(f => ({
-          name: f.name,
-          language: f.language,
-          content: f.content!.substring(0, 500),
-        }))
-
-      // Stream request — real-time progress
+      // Stream request — real-time progress with extended thinking
       const controller = new AbortController()
       abortRef.current = controller
-      // Track timeout in a ref so the finally block can always clear it (was previously leaked on error path)
-      abortTimeoutRef.current = setTimeout(() => controller.abort(), 120000)
+      // Extended thinking needs more time — 4 min timeout
+      abortTimeoutRef.current = setTimeout(() => controller.abort(), 240000)
       const timeoutId = abortTimeoutRef.current
 
       let response: Response
@@ -222,12 +209,14 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             messages: baseMessages.map(m => ({ role: m.role, content: m.content })),
-            context: context ? (context + memoryContext) : (memoryContext || undefined),
+            projectContext,
+            userMemory: memoryContext,
             applyMode: useFixMode,
             tutorMode: useTutorMode,
             convertMode: useConvertMode,
             agentMode: useAgentMode,
-            projectFiles: projectFilesForAI,
+            enableThinking: useAgentMode || useFixMode, // extended thinking for complex modes
+            enableWebSearch: useAgentMode, // web search for agent mode
             stream: true,
           }),
           signal: controller.signal,
@@ -239,7 +228,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
 
       if (!response.ok) throw new Error('AI request failed')
 
-      // Read SSE stream — real progress!
+      // Read SSE stream — real-time progress with phase tracking!
       const reader = response.body?.getReader()
       if (!reader) throw new Error('STREAM_ERROR')
       readerRef.current = reader
@@ -247,7 +236,8 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       const decoder = new TextDecoder()
       replyRef.current = ''
       let buffer = ''
-      let firstChunk = true
+      let firstContentChunk = true
+      let usedWebSearch = false
 
       // Show a placeholder assistant message that we'll update in real-time
       setMessages([...baseMessages, { role: 'assistant', content: '' }])
@@ -269,17 +259,39 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
 
           try {
             const parsed = JSON.parse(dataStr)
+
+            // Handle phase indicators
+            if (parsed.phase) {
+              if (parsed.phase === 'thinking') {
+                setCurrentPhase('thinking')
+                setProgressSteps([{ text: 'AI sedang berpikir mendalam...', done: false, icon: Brain }])
+              } else if (parsed.phase === 'done') {
+                setCurrentPhase('done')
+              }
+            }
+
+            // Handle reasoning/thinking content (streamed live)
+            if (parsed.thinking && typeof parsed.thinking === 'string') {
+              reasoningRef.current += parsed.thinking
+              setLiveReasoning(reasoningRef.current)
+              if (currentPhase !== 'thinking') {
+                setCurrentPhase('thinking')
+                setProgressSteps([{ text: 'AI sedang berpikir mendalam...', done: false, icon: Brain }])
+              }
+            }
+
+            // Handle regular content
             if (parsed.content) {
               replyRef.current += parsed.content
 
-              // Real progress: update steps based on content
-              if (firstChunk) {
-                firstChunk = false
-                // Mark "writing" as in-progress (not done) — will be cleared by `finally` on completion
-                setProgressSteps([{ text: 'AI sedang menulis...', done: false }])
+              // First content chunk — transition from thinking to writing
+              if (firstContentChunk) {
+                firstContentChunk = false
+                setCurrentPhase('writing')
+                setProgressSteps([{ text: 'AI sedang menulis jawaban...', done: false, icon: Terminal }])
               }
 
-              // Update message in real-time (throttle to avoid too many re-renders)
+              // Update message in real-time
               const currentReply = replyRef.current
               setMessages(prev => {
                 const newMsgs = [...prev]
@@ -305,12 +317,14 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       // Ensure final reply is set
       if (!replyRef.current) replyRef.current = 'AI tidak memberikan respons. Coba lagi.'
       const reply = replyRef.current
+      const finalReasoning = reasoningRef.current
 
       haptic([10, 30, 10])
 
       // AGENT MODE: Parse and apply directly to files
       if (useAgentMode) {
-        setProgressSteps([{ text: 'Menerapkan kode ke file...', done: false }])
+        setCurrentPhase('applying')
+        setProgressSteps([{ text: 'Menerapkan kode ke file...', done: false, icon: FileCode }])
 
         const actions = parseAgentFiles(reply, activeFile?.name || 'index.html')
         const thinkingSteps = parseThinkingSteps(reply)
@@ -331,7 +345,8 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
             }
           }
 
-          setProgressSteps([{ text: `Selesai! ${appliedFiles.length} file diperbarui`, done: true }])
+          setProgressSteps([{ text: `Selesai! ${appliedFiles.length} file diperbarui`, done: true, icon: Check }])
+          setCurrentPhase('done')
 
           const summaryLines = reply.split('\n').filter(l => l.trim().startsWith('-') || l.trim().startsWith('OK'))
           const summary = summaryLines.length > 0 ? summaryLines.join('\n') : `Selesai mengubah ${appliedFiles.length} file`
@@ -350,13 +365,20 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
             isAgentDone: true,
             appliedFiles,
             thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
+            reasoning: finalReasoning || undefined,
+            usedWebSearch,
           }])
           return
         }
       }
 
       // Normal/Fix/Convert response — single memory push (was previously double-pushed)
-      setMessages([...baseMessages, { role: 'assistant', content: reply }])
+      setMessages([...baseMessages, {
+        role: 'assistant',
+        content: reply,
+        reasoning: finalReasoning || undefined,
+        usedWebSearch,
+      }])
       memoryRef.current.push(`User: ${content}\nAI: ${reply.substring(0, 200)}`)
       if (memoryRef.current.length > 10) memoryRef.current.shift()
       setMemoryCount(memoryRef.current.length)
@@ -365,7 +387,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       console.error(error)
       let errMsg = 'Terjadi kesalahan. Silakan coba lagi.'
       if (error?.name === 'AbortError' || error?.message === 'TIMEOUT') {
-        errMsg = 'Permintaan terlalu lama (timeout 2 menit). Coba permintaan yang lebih singkat.'
+        errMsg = 'Permintaan terlalu lama (timeout 4 menit). Coba permintaan yang lebih singkat.'
       } else if (error?.message === 'CONNECTION') {
         errMsg = 'Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.'
       } else if (error?.message === 'AI request failed') {
@@ -381,6 +403,8 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       }
       setLoading(false)
       setProgressSteps([])
+      setCurrentPhase('idle')
+      // Keep liveReasoning for display until next message; clear on new chat
       // Clear refs so they can be GC'd
       abortRef.current = null
       readerRef.current = null
@@ -432,8 +456,13 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
             <Bot className="h-4 w-4" />
           </div>
           <div className="flex flex-col">
-            <span className={cn('font-semibold', isMobile ? 'text-sm' : 'text-xs uppercase tracking-wide')}>
-              ZCode AI {mode === 'agent' && <span className="ml-1 rounded bg-foreground px-1.5 py-0.5 text-[9px] text-background">AGENT</span>}
+            <span className={cn('font-semibold flex items-center gap-1.5', isMobile ? 'text-sm' : 'text-xs uppercase tracking-wide')}>
+              ZCode AI
+              {mode === 'agent' && (
+                <span className="flex items-center gap-1 rounded bg-gradient-to-r from-purple-500 to-blue-500 px-1.5 py-0.5 text-[9px] text-white">
+                  <Sparkles className="h-2.5 w-2.5" />AGENT PRO
+                </span>
+              )}
             </span>
             {isMobile && activeFile && <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">{activeFile.name}</span>}
           </div>
@@ -480,11 +509,13 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
               <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--list-hover)] md:mb-4">
                 <Brain className="h-7 w-7" />
               </div>
-              <h3 className="mb-1 text-sm font-semibold md:text-base">ZCode AI</h3>
+              <h3 className="mb-1 text-sm font-semibold md:text-base flex items-center gap-1.5">
+                ZCode AI <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+              </h3>
               <p className="mb-4 max-w-[260px] text-xs text-muted-foreground md:mb-5 md:text-sm">
                 {mode === 'agent'
-                  ? 'Agent mode. AI berpikir terlebih dahulu, lalu menulis kode langsung ke file. Contoh: "buat game ular" atau "buat dalam bahasa Indonesia"'
-                  : 'Chat biasa. Tanya apa saja. Untuk edit file langsung, ganti ke mode Agent di bawah.'
+                  ? 'Agent Pro mode. Extended thinking + web search + auto-apply ke file. Contoh: "buat game ular dengan canvas" atau "buat landing page modern"'
+                  : 'Chat mode. Tanya apa saja tentang coding. Untuk edit file langsung + reasoning, ganti ke Agent Pro di bawah.'
                 }
               </p>
               <div className="grid w-full grid-cols-2 gap-2">
@@ -506,20 +537,48 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
                 <MessageBubble key={i} message={msg} isMobile={isMobile} onRegenerate={msg.role === 'assistant' && i === messages.length - 1 && !loading ? () => regenerate(i) : undefined} />
               ))}
 
-              {/* Progress steps */}
+              {/* Progress steps with phase indicator */}
               {loading && progressSteps.length > 0 && (
                 <div className="flex gap-2">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--list-hover)]">
-                    <Terminal className="h-4 w-4" />
-                  </div>
+                  {(() => {
+                    const PhaseIcon = progressSteps[0]?.icon
+                    return (
+                      <div className={cn(
+                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors',
+                        currentPhase === 'thinking' ? 'bg-purple-500/20' :
+                        currentPhase === 'searching' ? 'bg-blue-500/20' :
+                        currentPhase === 'writing' ? 'bg-emerald-500/20' :
+                        currentPhase === 'applying' ? 'bg-amber-500/20' :
+                        'bg-[var(--list-hover)]'
+                      )}>
+                        {PhaseIcon ? <PhaseIcon className={cn(
+                          'h-4 w-4',
+                          currentPhase === 'thinking' && 'text-purple-400',
+                          currentPhase === 'searching' && 'text-blue-400',
+                          currentPhase === 'writing' && 'text-emerald-400',
+                          currentPhase === 'applying' && 'text-amber-400',
+                        )} /> : <Terminal className="h-4 w-4" />}
+                      </div>
+                    )
+                  })()}
                   <div className="flex-1 rounded-2xl rounded-tl-sm bg-[var(--input-bg)] px-3 py-2.5">
                     <div className="space-y-1.5">
-                      {progressSteps.map((step, idx) => (
-                        <div key={idx} className="flex items-center gap-2 text-[13px]">
-                          {step.done ? <Check className="h-3.5 w-3.5 shrink-0 text-foreground" /> : <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />}
-                          <span className={step.done ? 'text-muted-foreground' : 'text-foreground'}>{step.text}</span>
-                        </div>
-                      ))}
+                      {progressSteps.map((step, idx) => {
+                        const StepIcon = step.icon
+                        return (
+                          <div key={idx} className="flex items-center gap-2 text-[13px]">
+                            {step.done ? <Check className="h-3.5 w-3.5 shrink-0 text-foreground" /> :
+                             StepIcon ? <StepIcon className="h-3.5 w-3.5 shrink-0 animate-pulse" /> :
+                             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />}
+                            <span className={step.done ? 'text-muted-foreground' : 'text-foreground'}>{step.text}</span>
+                          </div>
+                        )
+                      })}
+
+                      {/* Live reasoning panel (Claude 3.5-style thinking) */}
+                      {liveReasoning && (
+                        <ReasoningPanel reasoning={liveReasoning} isStreaming={currentPhase === 'thinking'} />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -558,15 +617,15 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
           <button onClick={() => { haptic(10); setMode('normal') }} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all', mode === 'normal' ? 'bg-[var(--list-hover)] text-foreground' : 'text-muted-foreground')}>
             <ChatIcon className="h-3.5 w-3.5" /> Normal
           </button>
-          <button onClick={() => { haptic(10); setMode('agent') }} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all', mode === 'agent' ? 'bg-foreground text-background' : 'text-muted-foreground')}>
-            <Terminal className="h-3.5 w-3.5" /> Agent
+          <button onClick={() => { haptic(10); setMode('agent') }} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all', mode === 'agent' ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white' : 'text-muted-foreground')}>
+            <Sparkles className="h-3.5 w-3.5" /> Agent Pro
           </button>
         </div>
 
         {/* Input */}
         <div className="relative">
           <Textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder={mode === 'agent' ? (isMobile ? "Perintah agent..." : "Ketik perintah... (mis: buat game ular)") : (isMobile ? "Tanya AI apa saja..." : "Ajak AI ngol, tanya apa saja...")}
+            placeholder={mode === 'agent' ? (isMobile ? "Perintah Agent Pro..." : "Ketik perintah... (mis: buat game ular dengan canvas)") : (isMobile ? "Tanya AI apa saja..." : "Ajak AI ngol, tanya apa saja...")}
             className={cn('resize-none bg-[var(--input-bg)] pr-12 text-[13px]', isMobile ? 'min-h-[52px] max-h-[120px]' : 'min-h-[56px] max-h-[140px]')}
             rows={isMobile ? 2 : 3} maxLength={4000} />
           <Button size="icon" onClick={() => sendMessage()} disabled={!input.trim() || loading} className={cn('absolute bottom-2 right-2 shrink-0', isMobile ? 'h-9 w-9' : 'h-7 w-7')} aria-label="Send">
@@ -594,6 +653,7 @@ function MessageBubble({ message, isMobile, onRegenerate }: MessageBubbleProps) 
           <Check className="h-4 w-4 text-background" />
         </div>
         <div className="flex-1 space-y-2">
+          {message.reasoning && <ReasoningPanel reasoning={message.reasoning} isStreaming={false} />}
           {message.thinkingSteps && message.thinkingSteps.length > 0 && (
             <div className="rounded-xl bg-[var(--input-bg)] px-3 py-2 text-[11px] text-muted-foreground">
               <div className="mb-1 flex items-center gap-1 font-medium">
@@ -615,6 +675,12 @@ function MessageBubble({ message, isMobile, onRegenerate }: MessageBubbleProps) 
                 ))}
               </div>
             )}
+            {message.usedWebSearch && (
+              <div className="mt-2 flex items-center gap-1 text-[10px] text-blue-400">
+                <Globe className="h-3 w-3" />
+                <span>Diperkaya dengan web search</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -629,6 +695,9 @@ function MessageBubble({ message, isMobile, onRegenerate }: MessageBubbleProps) 
         {isUser ? <User className={isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5'} /> : <Bot className={isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5'} />}
       </div>
       <div className={cn('flex-1 space-y-1.5', isUser && 'max-w-[85%]')}>
+        {!isUser && message.reasoning && (
+          <ReasoningPanel reasoning={message.reasoning} isStreaming={false} />
+        )}
         <div className={cn('rounded-2xl px-3 py-2 text-[13px] leading-relaxed', isUser ? 'bg-[var(--primary)] text-[var(--primary-foreground)] rounded-tr-sm' : 'bg-[var(--input-bg)] rounded-tl-sm')}>
           {parts.map((part, i) => {
             if (part.startsWith('```')) {
@@ -637,6 +706,12 @@ function MessageBubble({ message, isMobile, onRegenerate }: MessageBubbleProps) 
             }
             return <p key={i} className="whitespace-pre-wrap break-words">{part}</p>
           })}
+          {!isUser && message.usedWebSearch && (
+            <div className="mt-1.5 flex items-center gap-1 text-[10px] text-blue-400">
+              <Globe className="h-3 w-3" />
+              <span>Diperkaya dengan web search</span>
+            </div>
+          )}
         </div>
         {!isUser && onRegenerate && (
           <button onClick={onRegenerate} className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] text-muted-foreground hover:bg-[var(--list-hover)] hover:text-foreground active:scale-95">
@@ -672,3 +747,47 @@ function CodeBlock({ code, lang, isMobile }: { code: string; lang: string; isMob
     </div>
   )
 }
+
+/**
+ * ReasoningPanel — Claude 3.5-style live thinking display
+ * Shows the AI's internal reasoning process in a collapsible panel.
+ */
+function ReasoningPanel({ reasoning, isStreaming }: { reasoning: string; isStreaming: boolean }) {
+  const [expanded, setExpanded] = useState(true)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to bottom while streaming
+  useEffect(() => {
+    if (isStreaming && contentRef.current) {
+      contentRef.current.scrollTop = contentRef.current.scrollHeight
+    }
+  }, [reasoning, isStreaming])
+
+  // Truncate display if reasoning gets very long (keep last ~2000 chars visible)
+  const displayReasoning = reasoning.length > 3000
+    ? '...\n' + reasoning.slice(-3000)
+    : reasoning
+
+  return (
+    <div className="mt-2 rounded-lg border border-purple-500/20 bg-purple-500/5">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-purple-400 hover:bg-purple-500/10"
+      >
+        <Brain className="h-3 w-3" />
+        <span>REASONING{isStreaming ? ' (live)' : ''}</span>
+        {isStreaming && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+        <ChevronRight className={cn('ml-auto h-3 w-3 transition-transform', expanded && 'rotate-90')} />
+      </button>
+      {expanded && (
+        <div
+          ref={contentRef}
+          className="max-h-32 overflow-y-auto px-2.5 pb-2 text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words font-mono"
+        >
+          {displayReasoning || '(menunggu...)'}
+        </div>
+      )}
+    </div>
+  )
+}
+

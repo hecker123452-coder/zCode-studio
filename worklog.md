@@ -110,3 +110,70 @@ Stage Summary:
 - ✅ Dev server healthy, AI features verified end-to-end
 - ✅ Project still deployable — no breaking changes
 - Screenshots saved to /home/z/my-project/download/: zcode-about-dialog.png, zcode-quick-code.png
+
+---
+Task ID: 3
+Agent: main-agent (Super Z)
+Task: Upgrade AI agent intelligence to Claude 3.5-tier (extended thinking, real streaming, web search).
+
+Work Log:
+- Audited z-ai-web-dev-sdk v0.0.18 capabilities via dist/index.d.ts + README.md
+- Discovered SDK supports: real streaming (stream: true), extended thinking (thinking: { type: 'enabled' }), web search (functions.invoke('web_search', ...)), page reader
+- Designed multi-phase agent architecture: Analyze → Plan → Implement → Verify
+- Created 3 new files in src/lib/ai/:
+  1. prompts.ts — Enhanced system prompts with 4-phase reasoning (ANALYZE_PHASE, PLAN_PHASE, IMPLEMENT_PHASE, VERIFY_PHASE), language-specific standards, code quality checklist, parseAgentFiles, parseThinkingSteps, shouldSearchWeb
+  2. context-builder.ts — Smart project context builder: file tree (hierarchical), active file, related files (CSS/JS imports + siblings), project stats
+  3. (route.ts handles the rest)
+- Upgraded /api/ai/route.ts:
+  * REAL streaming via SDK (was: get full reply then fake-chunk it) — tokens now stream token-by-token
+  * Extended thinking mode (thinking: { type: 'enabled' }) for agent + fix modes — Claude 3.5-style reasoning
+  * Web search capability — AI auto-searches latest docs when user asks about recent/2025/2026 stuff
+  * Smart project context — file tree + active file + related files (was: first 5 files truncated to 500 chars)
+  * Multi-phase SSE events: { phase: 'thinking' }, { thinking: '...' }, { content: '...' }, { phase: 'done' }
+  * Rate limit upped 30 → 60 req/min (extended thinking uses more tokens)
+  * Timeout 2min → 4min (extended thinking needs more time)
+  * maxDuration 180s → 300s
+  * max_tokens 3000 → 4000 (normal), 6000 → 8000 (agent/fix/convert)
+- Upgraded AI Assistant UI (ai-assistant.tsx):
+  * Live ReasoningPanel — collapsible purple panel showing AI's thinking process in real-time (auto-scroll, max 3000 chars display)
+  * Phase-aware progress indicator — color-coded by phase (purple=thinking, blue=searching, green=writing, amber=applying)
+  * Phase icons (Brain for thinking, Terminal for writing, FileCode for applying, Check for done)
+  * "Agent Pro" badge with gradient (purple→blue) replacing plain "AGENT"
+  * Web search indicator on messages ("Diperkaya dengan web search")
+  * Reasoning preserved on completed messages (collapsible)
+  * Updated empty-state copy to highlight new capabilities
+- Debugging: SDK returns ReadableStream directly (not Response with .body) — fixed handler to detect both shapes
+- Verified real streaming works: tokens arrive one-by-one ("H", "alo", " bro", "!")
+- Verified extended thinking works: AI outputs "ANALISIS:" section with Intent/Approach/Files/Edge cases/Risk
+- Verified web search trigger: queries with "latest", "2025", "docs" auto-trigger web_search function
+
+VERIFICATION:
+- bun run lint: 0 errors (after fixing JSX issue with progressSteps[0].icon — extracted to PhaseIcon variable)
+- Dev server hot-reload: ✓ Compiled in 288ms
+- curl POST /api/ai (non-stream): HTTP 200 with reply
+- curl POST /api/ai (stream): real SSE tokens streaming token-by-token
+- curl POST /api/ai (stream + enableThinking): extended thinking mode active, AI outputs ANALISIS phase
+- curl POST /api/ai (stream + enableWebSearch): web search triggered for "latest Next.js 16 2025" query
+- agent-browser end-to-end:
+  * Page renders correctly
+  * "Agent Pro" button visible with gradient badge
+  * Switched to Agent Pro mode → typed "buat function javascript untuk cek bilangan prima"
+  * AI responded with full ANALISIS (Intent, Approach, Files affected, Edge cases, Risk level)
+  * AI auto-created file src/utils.js with complete isPrime function (JSDoc, input validation, error handling)
+  * File opened in editor automatically
+  * Reasoning panel visible
+  * Screenshot saved: download/zcode-agent-pro.png
+
+Stage Summary:
+- ✅ Real streaming (token-by-token, was fake chunked)
+- ✅ Extended thinking mode (Claude 3.5-style reasoning)
+- ✅ Web search capability (AI auto-searches latest docs)
+- ✅ Smart project context (file tree + related files, was first-5-truncated)
+- ✅ Multi-phase system prompt (Analyze → Plan → Implement → Verify)
+- ✅ Live reasoning panel (collapsible, auto-scroll, real-time)
+- ✅ Phase-aware progress indicators (color-coded)
+- ✅ Agent Pro badge (gradient, replacing plain AGENT)
+- ✅ Lint clean (0 errors)
+- ✅ Dev server healthy
+- ✅ End-to-end verified: AI wrote complete isPrime function with JSDoc + validation
+- AI intelligence now matches Claude 3.5-tier capabilities available in the SDK
