@@ -6,7 +6,7 @@ import {
   Lightbulb, Bug, BookOpen, Wand2, ArrowLeft, X, Copy, Check,
   RefreshCw, Wrench, FileCode, Zap, ClipboardList, GitBranch,
   FileSearch, GraduationCap, ArrowLeftRight, Terminal, Brain,
-  PlusSquare, MessageSquarePlus, Globe, ChevronRight,
+  PlusSquare, MessageSquarePlus, Globe, ChevronRight, ShieldCheck,
   type LucideIcon,
 } from 'lucide-react'
 import { useEditorStore } from '@/store/editor-store'
@@ -31,6 +31,9 @@ interface ChatMessage {
   thinkingSteps?: string[]
   reasoning?: string
   usedWebSearch?: boolean
+  executionPlan?: string[]
+  review?: string
+  reviewVerdict?: 'approved' | 'needs_refinement' | 'unknown'
 }
 
 interface QuickAction {
@@ -65,8 +68,13 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
   const [mode, setMode] = useState<'normal' | 'agent'>('normal')
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([])
   const [memoryCount, setMemoryCount] = useState(0)
-  const [currentPhase, setCurrentPhase] = useState<'idle' | 'connecting' | 'thinking' | 'searching' | 'writing' | 'applying' | 'done'>('idle')
+  const [currentPhase, setCurrentPhase] = useState<'idle' | 'connecting' | 'thinking' | 'searching' | 'planning' | 'writing' | 'reviewing' | 'refining' | 'applying' | 'done'>('idle')
   const [liveReasoning, setLiveReasoning] = useState<string>('')
+  const [executionPlan, setExecutionPlan] = useState<string[]>([])
+  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set())
+  const [currentStep, setCurrentStep] = useState<number>(-1)
+  const [reviewResult, setReviewResult] = useState<string | null>(null)
+  const [reviewVerdict, setReviewVerdict] = useState<'approved' | 'needs_refinement' | 'unknown' | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const memoryRef = useRef<string[]>([])
   const replyRef = useRef<string>('')
@@ -118,6 +126,11 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
     setProgressSteps([])
     setCurrentPhase('idle')
     setLiveReasoning('')
+    setExecutionPlan([])
+    setCompletedSteps(new Set())
+    setCurrentStep(-1)
+    setReviewResult(null)
+    setReviewVerdict(null)
     reasoningRef.current = ''
     replyRef.current = ''
     memoryRef.current = []
@@ -135,6 +148,11 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       setProgressSteps([])
       setCurrentPhase('idle')
       setLiveReasoning('')
+      setExecutionPlan([])
+      setCompletedSteps(new Set())
+      setCurrentStep(-1)
+      setReviewResult(null)
+      setReviewVerdict(null)
       reasoningRef.current = ''
       replyRef.current = ''
       memoryRef.current = []
@@ -172,6 +190,11 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
     setProgressSteps([])
     setCurrentPhase('connecting')
     setLiveReasoning('')
+    setExecutionPlan([])
+    setCompletedSteps(new Set())
+    setCurrentStep(-1)
+    setReviewResult(null)
+    setReviewVerdict(null)
     reasoningRef.current = ''
 
     const useAgentMode = mode === 'agent' && !action?.mode
@@ -260,9 +283,24 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
           try {
             const parsed = JSON.parse(dataStr)
 
-            // Handle phase indicators
+            // Handle phase indicators (multi-step agent phases)
             if (parsed.phase) {
-              if (parsed.phase === 'thinking') {
+              if (parsed.phase === 'search') {
+                setCurrentPhase('searching')
+                setProgressSteps([{ text: 'Mencari dokumentasi terbaru...', done: false, icon: Globe }])
+              } else if (parsed.phase === 'plan') {
+                setCurrentPhase('planning')
+                setProgressSteps([{ text: 'Menyusun execution plan...', done: false, icon: ClipboardList }])
+              } else if (parsed.phase === 'implement') {
+                setCurrentPhase('writing')
+                setProgressSteps([{ text: 'Menulis kode production-grade...', done: false, icon: Terminal }])
+              } else if (parsed.phase === 'verify') {
+                setCurrentPhase('reviewing')
+                setProgressSteps([{ text: 'Self-review kode...', done: false, icon: ShieldCheck }])
+              } else if (parsed.phase === 'refine') {
+                setCurrentPhase('refining')
+                setProgressSteps([{ text: 'Refining kode berdasarkan review...', done: false, icon: Wrench }])
+              } else if (parsed.phase === 'thinking') {
                 setCurrentPhase('thinking')
                 setProgressSteps([{ text: 'AI sedang berpikir mendalam...', done: false, icon: Brain }])
               } else if (parsed.phase === 'done') {
@@ -270,25 +308,53 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
               }
             }
 
+            // Handle execution plan (from planning phase)
+            if (parsed.plan && Array.isArray(parsed.plan)) {
+              setExecutionPlan(parsed.plan)
+            }
+
+            // Handle individual plan steps (for checklist UI)
+            if (parsed.planStep) {
+              setCurrentStep(parsed.planStep.index)
+              // Mark previous steps as completed
+              setCompletedSteps(prev => {
+                const next = new Set(prev)
+                for (let i = 1; i < parsed.planStep.index; i++) next.add(i)
+                return next
+              })
+            }
+
+            // Handle review result
+            if (parsed.review) {
+              setReviewResult(parsed.review)
+            }
+            if (parsed.verdict) {
+              setReviewVerdict(parsed.verdict)
+              // Mark all plan steps as completed when review is done
+              setCompletedSteps(prev => {
+                const next = new Set(prev)
+                executionPlan.forEach((_, i) => next.add(i + 1))
+                return next
+              })
+            }
+
             // Handle reasoning/thinking content (streamed live)
             if (parsed.thinking && typeof parsed.thinking === 'string') {
               reasoningRef.current += parsed.thinking
               setLiveReasoning(reasoningRef.current)
-              if (currentPhase !== 'thinking') {
-                setCurrentPhase('thinking')
-                setProgressSteps([{ text: 'AI sedang berpikir mendalam...', done: false, icon: Brain }])
-              }
             }
 
-            // Handle regular content
+            // Handle regular content (code generation)
             if (parsed.content) {
               replyRef.current += parsed.content
 
-              // First content chunk — transition from thinking to writing
-              if (firstContentChunk) {
+              // First content chunk — transition to writing (if not already in refine phase)
+              if (firstContentChunk && currentPhase !== 'refining') {
                 firstContentChunk = false
                 setCurrentPhase('writing')
-                setProgressSteps([{ text: 'AI sedang menulis jawaban...', done: false, icon: Terminal }])
+                setProgressSteps([{ text: 'Menulis kode production-grade...', done: false, icon: Terminal }])
+              } else if (firstContentChunk) {
+                firstContentChunk = false
               }
 
               // Update message in real-time
@@ -318,6 +384,9 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       if (!replyRef.current) replyRef.current = 'AI tidak memberikan respons. Coba lagi.'
       const reply = replyRef.current
       const finalReasoning = reasoningRef.current
+      const finalPlan = executionPlan.length > 0 ? [...executionPlan] : undefined
+      const finalReview = reviewResult || undefined
+      const finalVerdict = reviewVerdict || undefined
 
       haptic([10, 30, 10])
 
@@ -367,6 +436,9 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
             thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
             reasoning: finalReasoning || undefined,
             usedWebSearch,
+            executionPlan: finalPlan,
+            review: finalReview,
+            reviewVerdict: finalVerdict,
           }])
           return
         }
@@ -378,6 +450,9 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
         content: reply,
         reasoning: finalReasoning || undefined,
         usedWebSearch,
+        executionPlan: finalPlan,
+        review: finalReview,
+        reviewVerdict: finalVerdict,
       }])
       memoryRef.current.push(`User: ${content}\nAI: ${reply.substring(0, 200)}`)
       if (memoryRef.current.length > 10) memoryRef.current.shift()
@@ -547,7 +622,10 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
                         'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors',
                         currentPhase === 'thinking' ? 'bg-purple-500/20' :
                         currentPhase === 'searching' ? 'bg-blue-500/20' :
+                        currentPhase === 'planning' ? 'bg-cyan-500/20' :
                         currentPhase === 'writing' ? 'bg-emerald-500/20' :
+                        currentPhase === 'reviewing' ? 'bg-orange-500/20' :
+                        currentPhase === 'refining' ? 'bg-pink-500/20' :
                         currentPhase === 'applying' ? 'bg-amber-500/20' :
                         'bg-[var(--list-hover)]'
                       )}>
@@ -555,7 +633,10 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
                           'h-4 w-4',
                           currentPhase === 'thinking' && 'text-purple-400',
                           currentPhase === 'searching' && 'text-blue-400',
+                          currentPhase === 'planning' && 'text-cyan-400',
                           currentPhase === 'writing' && 'text-emerald-400',
+                          currentPhase === 'reviewing' && 'text-orange-400',
+                          currentPhase === 'refining' && 'text-pink-400',
                           currentPhase === 'applying' && 'text-amber-400',
                         )} /> : <Terminal className="h-4 w-4" />}
                       </div>
@@ -575,9 +656,24 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
                         )
                       })}
 
+                      {/* Execution Plan Checklist (multi-step agent) */}
+                      {executionPlan.length > 0 && (
+                        <ExecutionPlanChecklist
+                          plan={executionPlan}
+                          completedSteps={completedSteps}
+                          currentStep={currentStep}
+                          isPlanning={currentPhase === 'planning'}
+                        />
+                      )}
+
                       {/* Live reasoning panel (Claude 3.5-style thinking) */}
                       {liveReasoning && (
                         <ReasoningPanel reasoning={liveReasoning} isStreaming={currentPhase === 'thinking'} />
+                      )}
+
+                      {/* Live review result */}
+                      {reviewResult && currentPhase === 'reviewing' && (
+                        <ReviewPanel review={reviewResult} verdict={reviewVerdict} isStreaming />
                       )}
                     </div>
                   </div>
@@ -654,6 +750,14 @@ function MessageBubble({ message, isMobile, onRegenerate }: MessageBubbleProps) 
         </div>
         <div className="flex-1 space-y-2">
           {message.reasoning && <ReasoningPanel reasoning={message.reasoning} isStreaming={false} />}
+          {message.executionPlan && message.executionPlan.length > 0 && (
+            <ExecutionPlanChecklist
+              plan={message.executionPlan}
+              completedSteps={new Set(message.executionPlan.map((_, i) => i + 1))}
+              currentStep={-1}
+              isPlanning={false}
+            />
+          )}
           {message.thinkingSteps && message.thinkingSteps.length > 0 && (
             <div className="rounded-xl bg-[var(--input-bg)] px-3 py-2 text-[11px] text-muted-foreground">
               <div className="mb-1 flex items-center gap-1 font-medium">
@@ -682,6 +786,13 @@ function MessageBubble({ message, isMobile, onRegenerate }: MessageBubbleProps) 
               </div>
             )}
           </div>
+          {message.review && (
+            <ReviewPanel
+              review={message.review}
+              verdict={message.reviewVerdict || null}
+              isStreaming={false}
+            />
+          )}
         </div>
       </div>
     )
@@ -698,6 +809,14 @@ function MessageBubble({ message, isMobile, onRegenerate }: MessageBubbleProps) 
         {!isUser && message.reasoning && (
           <ReasoningPanel reasoning={message.reasoning} isStreaming={false} />
         )}
+        {!isUser && message.executionPlan && message.executionPlan.length > 0 && (
+          <ExecutionPlanChecklist
+            plan={message.executionPlan}
+            completedSteps={new Set(message.executionPlan.map((_, i) => i + 1))}
+            currentStep={-1}
+            isPlanning={false}
+          />
+        )}
         <div className={cn('rounded-2xl px-3 py-2 text-[13px] leading-relaxed', isUser ? 'bg-[var(--primary)] text-[var(--primary-foreground)] rounded-tr-sm' : 'bg-[var(--input-bg)] rounded-tl-sm')}>
           {parts.map((part, i) => {
             if (part.startsWith('```')) {
@@ -713,6 +832,13 @@ function MessageBubble({ message, isMobile, onRegenerate }: MessageBubbleProps) 
             </div>
           )}
         </div>
+        {!isUser && message.review && (
+          <ReviewPanel
+            review={message.review}
+            verdict={message.reviewVerdict || null}
+            isStreaming={false}
+          />
+        )}
         {!isUser && onRegenerate && (
           <button onClick={onRegenerate} className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] text-muted-foreground hover:bg-[var(--list-hover)] hover:text-foreground active:scale-95">
             <RefreshCw className="h-3 w-3" /><span>Regenerate</span>
@@ -785,6 +911,131 @@ function ReasoningPanel({ reasoning, isStreaming }: { reasoning: string; isStrea
           className="max-h-32 overflow-y-auto px-2.5 pb-2 text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words font-mono"
         >
           {displayReasoning || '(menunggu...)'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * ExecutionPlanChecklist — multi-step agent execution plan display
+ * Shows the AI's plan as a checklist that updates in real-time.
+ */
+function ExecutionPlanChecklist({
+  plan,
+  completedSteps,
+  currentStep,
+  isPlanning,
+}: {
+  plan: string[]
+  completedSteps: Set<number>
+  currentStep: number
+  isPlanning: boolean
+}) {
+  const [expanded, setExpanded] = useState(true)
+
+  return (
+    <div className="mt-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-cyan-400 hover:bg-cyan-500/10"
+      >
+        <ClipboardList className="h-3 w-3" />
+        <span>EXECUTION PLAN{isPlanning ? ' (planning)' : ''}</span>
+        <span className="ml-1 rounded bg-cyan-500/20 px-1 text-[9px]">
+          {completedSteps.size}/{plan.length}
+        </span>
+        <ChevronRight className={cn('ml-auto h-3 w-3 transition-transform', expanded && 'rotate-90')} />
+      </button>
+      {expanded && (
+        <div className="px-2.5 pb-2 space-y-1">
+          {plan.map((step, idx) => {
+            const stepNum = idx + 1
+            const isCompleted = completedSteps.has(stepNum)
+            const isCurrent = currentStep === stepNum && !isCompleted
+            // Extract task name from "task — complexity — risk — description" format
+            const parts = step.split('—').map(s => s.trim())
+            const taskName = parts[0] || step
+            const meta = parts.slice(1).join(' · ')
+
+            return (
+              <div key={idx} className="flex items-start gap-2 text-[11px]">
+                <div className="mt-0.5 shrink-0">
+                  {isCompleted ? (
+                    <Check className="h-3 w-3 text-emerald-400" />
+                  ) : isCurrent ? (
+                    <Loader2 className="h-3 w-3 animate-spin text-cyan-400" />
+                  ) : (
+                    <div className="h-3 w-3 rounded-full border border-muted-foreground/30" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className={isCompleted ? 'text-muted-foreground line-through' : isCurrent ? 'text-foreground font-medium' : 'text-muted-foreground'}>
+                    {taskName}
+                  </span>
+                  {meta && (
+                    <span className="block text-[9px] text-muted-foreground/70 truncate">{meta}</span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * ReviewPanel — displays AI's self-review of generated code
+ */
+function ReviewPanel({
+  review,
+  verdict,
+  isStreaming,
+}: {
+  review: string
+  verdict: 'approved' | 'needs_refinement' | 'unknown' | null
+  isStreaming?: boolean
+}) {
+  const [expanded, setExpanded] = useState(true)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (isStreaming && contentRef.current) {
+      contentRef.current.scrollTop = contentRef.current.scrollHeight
+    }
+  }, [review, isStreaming])
+
+  const verdictColor = verdict === 'approved' ? 'text-emerald-400' :
+                       verdict === 'needs_refinement' ? 'text-orange-400' :
+                       'text-muted-foreground'
+  const verdictLabel = verdict === 'approved' ? 'APPROVED' :
+                       verdict === 'needs_refinement' ? 'NEEDS REFINEMENT' :
+                       'REVIEWING'
+
+  return (
+    <div className="mt-2 rounded-lg border border-orange-500/20 bg-orange-500/5">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-orange-400 hover:bg-orange-500/10"
+      >
+        <ShieldCheck className="h-3 w-3" />
+        <span>SELF-REVIEW</span>
+        {verdict && (
+          <span className={cn('ml-1 rounded px-1 text-[9px] font-bold', verdictColor, 'bg-current/10')}>
+            {verdictLabel}
+          </span>
+        )}
+        {isStreaming && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+        <ChevronRight className={cn('ml-auto h-3 w-3 transition-transform', expanded && 'rotate-90')} />
+      </button>
+      {expanded && (
+        <div
+          ref={contentRef}
+          className="max-h-40 overflow-y-auto px-2.5 pb-2 text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words"
+        >
+          {review || '(menunggu review...)'}
         </div>
       )}
     </div>

@@ -1,28 +1,23 @@
 import { NextRequest } from 'next/server'
 import ZAI from 'z-ai-web-dev-sdk'
 import { buildSystemPrompt, shouldSearchWeb, type ProjectContext } from '@/lib/ai/prompts'
+import { runAgentLoop } from '@/lib/ai/agent-loop'
 
 export const runtime = 'nodejs'
-export const maxDuration = 300 // 5 min — extended thinking needs more time
+export const maxDuration = 600 // 10 min — multi-step agent needs lots of time
 
 /**
- * === UPGRADED AI API — Claude 3.5-tier agent ===
+ * === UPGRADED AI API — Claude 3.5-tier multi-step agent ===
  *
- * Key upgrades from previous version:
- * 1. REAL streaming (was: get full reply, then chunk it)
- * 2. EXTENDED THINKING mode (Claude 3.5-style reasoning)
- * 3. WEB SEARCH capability (AI can lookup docs when needed)
- * 4. Smart project context (file tree + active file + related files)
- * 5. Multi-phase agent flow (Analyze → Plan → Implement → Verify)
- * 6. Better error handling & timeout management
+ * Multi-step agent flow (Plan → Execute → Review → Refine)
+ * Plus single-pass modes for simple requests.
  *
- * Rate limiting & session memory: same in-memory approach as before
- * (adequate for single-instance deployment like WebView APK).
+ * Rate limiting & session memory: in-memory (adequate for single-instance).
  */
 
-// ===== Rate Limiting (in-memory, same as before) =====
+// ===== Rate Limiting =====
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>()
-const RATE_LIMIT = 60 // 60 requests per minute (upped from 30 — extended thinking uses more)
+const RATE_LIMIT = 60
 const RATE_WINDOW = 60 * 1000
 const MAX_RATE_LIMIT_ENTRIES = 10000
 const EVICTION_INTERVAL = 5 * 60 * 1000
@@ -72,7 +67,7 @@ function pruneOldestEntries(
   }
 }
 
-// ===== Session Memory (in-memory) =====
+// ===== Session Memory =====
 interface SessionMemory {
   userQueries: string[]
   aiActions: string[]
@@ -197,60 +192,10 @@ export async function POST(req: NextRequest) {
       convertMode === 'js-to-indo' ? 'convert-indo' :
       'normal'
 
-    // Build enhanced system prompt
-    const systemPrompt = buildSystemPrompt({
-      mode,
-      context: projectContext,
-      userMemory: userMemory,
-      enableThinking: enableThinking ?? (mode === 'agent'),
-    })
-
-    // Check if web search would help (only in agent/fix mode, when enabled)
     const lastUserMsg = sanitizedMessages[sanitizedMessages.length - 1]
-    const needsWebSearch = enableWebSearch &&
-      lastUserMsg?.role === 'user' &&
-      shouldSearchWeb(lastUserMsg.content) &&
-      (mode === 'agent' || mode === 'fix' || mode === 'normal')
 
-    // ===== WEB SEARCH PHASE (optional) =====
-    let searchContext = ''
-    if (needsWebSearch) {
-      try {
-        const zai = await ZAI.create()
-        const searchQuery = `${lastUserMsg.content} latest documentation best practices`
-        const searchResults = await zai.functions.invoke('web_search', {
-          query: searchQuery,
-          num: 3,
-          recency_days: 90,
-        })
-
-        if (Array.isArray(searchResults) && searchResults.length > 0) {
-          searchContext = '\n\n=== WEB SEARCH RESULTS (recent docs) ===\n'
-          for (const r of searchResults.slice(0, 3)) {
-            searchContext += `\n[${r.rank}] ${r.name}\nURL: ${r.url}\n${r.snippet}\n`
-          }
-        }
-      } catch (searchErr) {
-        // Search failed — continue without it
-        console.warn('[ai] Web search failed:', searchErr)
-      }
-    }
-
-    // ===== BUILD FINAL MESSAGES =====
-    const finalMessages: ChatMessage[] = [
-      { role: 'system', content: systemPrompt + searchContext },
-      ...(sanitizedContext ? [{ role: 'system' as const, content: `Active file context:\n${sanitizedContext}` }] : []),
-      ...sanitizedMessages,
-    ]
-
-    const zai = await ZAI.create()
-
-    // ===== DETERMINE STREAMING STRATEGY =====
-    // Use REAL streaming when SDK supports it & client wants streaming
-    const useRealStream = wantStream === true
-
-    if (useRealStream) {
-      // ===== REAL STREAMING (SSE) =====
+    // ===== AGENT MODE: Use multi-step agent loop =====
+    if (mode === 'agent' && wantStream) {
       const encoder = new TextEncoder()
       let cancelled = false
       const abortSignal = req.signal
@@ -260,37 +205,137 @@ export async function POST(req: NextRequest) {
       const stream = new ReadableStream({
         async start(controller) {
           try {
-            // Send initial phase indicator
-            const phase = mode === 'agent' ? 'thinking' : 'connecting'
+            let fullReply = ''
+            let fullReasoning = ''
+
+            await runAgentLoop({
+              userRequest: lastUserMsg?.content || '',
+              conversationHistory: sanitizedMessages.map(m => ({
+                role: m.role as 'user' | 'assistant',
+                content: m.content,
+              })),
+              context: projectContext,
+              userMemory: userMemory || [],
+              enableWebSearch: enableWebSearch !== false, // default true for agent
+              enableThinking: enableThinking !== false, // default true for agent
+              signal: abortSignal,
+              onEvent: (event) => {
+                if (cancelled) return
+                try {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+                  if (event.content) fullReply += event.content
+                  if (event.thinking) fullReasoning += event.thinking
+                } catch { /* closed */ }
+              },
+            })
+
+            // Update memory
+            if (lastUserMsg && lastUserMsg.role === 'user' && fullReply) {
+              updateMemory(ip, lastUserMsg.content, fullReply)
+            }
+
+            try {
+              controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+              controller.close()
+            } catch { /* closed */ }
+            abortSignal.removeEventListener('abort', onAbort)
+          } catch (err) {
+            console.error('[ai] Agent loop error:', err)
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Agent error: ' + (err as Error).message })}\n\n`))
+              controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+              controller.close()
+            } catch { /* closed */ }
+            abortSignal.removeEventListener('abort', onAbort)
+          }
+        },
+        cancel() {
+          cancelled = true
+          abortSignal.removeEventListener('abort', onAbort)
+        },
+      })
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        },
+      })
+    }
+
+    // ===== NON-AGENT MODE: Single-pass streaming =====
+    const systemPrompt = buildSystemPrompt({
+      mode,
+      context: projectContext,
+      userMemory: userMemory,
+      enableThinking,
+    })
+
+    // Web search for non-agent modes (if enabled)
+    let searchContext = ''
+    if (enableWebSearch && lastUserMsg?.role === 'user' && shouldSearchWeb(lastUserMsg.content)) {
+      try {
+        const zai = await ZAI.create()
+        const searchResults = await zai.functions.invoke('web_search', {
+          query: `${lastUserMsg.content} latest documentation best practices`,
+          num: 3,
+          recency_days: 90,
+        })
+        if (Array.isArray(searchResults) && searchResults.length > 0) {
+          searchContext = '\n\n=== WEB SEARCH RESULTS (recent docs) ===\n'
+          for (const r of searchResults.slice(0, 3)) {
+            searchContext += `\n[${r.rank}] ${r.name}\nURL: ${r.url}\n${r.snippet}\n`
+          }
+        }
+      } catch (err) {
+        console.warn('[ai] Web search failed:', err)
+      }
+    }
+
+    const finalMessages: ChatMessage[] = [
+      { role: 'system', content: systemPrompt + searchContext },
+      ...(sanitizedContext ? [{ role: 'system' as const, content: `Active file context:\n${sanitizedContext}` }] : []),
+      ...sanitizedMessages,
+    ]
+
+    const zai = await ZAI.create()
+    const useRealStream = wantStream === true
+
+    if (useRealStream) {
+      const encoder = new TextEncoder()
+      let cancelled = false
+      const abortSignal = req.signal
+      const onAbort = () => { cancelled = true }
+      abortSignal.addEventListener('abort', onAbort)
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            const phase = mode === 'fix' ? 'thinking' : 'connecting'
             try {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ phase })}\n\n`))
-            } catch { /* controller closed */ }
+            } catch { /* closed */ }
 
-            // Call SDK with stream: true
             const completion = await zai.chat.completions.create({
               messages: finalMessages,
-              temperature: mode === 'agent' || mode === 'fix' ? 0.4 : 0.7,
-              max_tokens: mode === 'agent' || mode === 'fix' || mode.startsWith('convert') ? 8000 : 4000,
+              temperature: mode === 'fix' ? 0.4 : 0.7,
+              max_tokens: mode === 'fix' || mode.startsWith('convert') ? 8000 : 6000,
               stream: true,
               thinking: enableThinking ? { type: 'enabled' } : { type: 'disabled' },
             })
 
-            // Handle streaming response
-            // SDK returns ReadableStream directly when stream: true (not a Response object)
             let responseStream: ReadableStream<Uint8Array> | null = null
             if (completion instanceof ReadableStream) {
-              // SDK returned ReadableStream directly
               responseStream = completion
             } else if (completion?.body instanceof ReadableStream) {
-              // Response object with .body
               responseStream = completion.body
             } else if (completion instanceof Response && completion.body) {
-              // Response object
               responseStream = completion.body
             }
 
             if (responseStream) {
-              // Real streaming — parse SSE from SDK
               const reader = responseStream.getReader()
               const decoder = new TextDecoder()
               let buffer = ''
@@ -316,14 +361,12 @@ export async function POST(req: NextRequest) {
                     const content = delta?.content
                     const reasoning = delta?.reasoning || delta?.reasoning_content
 
-                    // Send reasoning (thinking) separately if present
                     if (reasoning && typeof reasoning === 'string') {
                       try {
                         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ thinking: reasoning })}\n\n`))
                       } catch { /* closed */ }
                     }
 
-                    // Send content
                     if (content && typeof content === 'string') {
                       fullReply += content
                       try {
@@ -331,16 +374,13 @@ export async function POST(req: NextRequest) {
                       } catch { /* closed */ }
                     }
 
-                    // Check for finish
                     if (parsed.choices?.[0]?.finish_reason === 'stop') {
-                      // Stream complete
                       try {
                         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ phase: 'done' })}\n\n`))
                         controller.enqueue(encoder.encode('data: [DONE]\n\n'))
                         controller.close()
                       } catch { /* closed */ }
                       abortSignal.removeEventListener('abort', onAbort)
-                      // Update memory
                       if (lastUserMsg && lastUserMsg.role === 'user' && fullReply) {
                         updateMemory(ip, lastUserMsg.content, fullReply)
                       }
@@ -352,7 +392,6 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // Stream ended (either done or cancelled)
               if (!cancelled) {
                 try {
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ phase: 'done' })}\n\n`))
@@ -367,17 +406,8 @@ export async function POST(req: NextRequest) {
               return
             }
 
-            // ===== FALLBACK: SDK didn't return a streamable response =====
-            // Get content from completion object (non-streaming fallback)
+            // Fallback: non-streaming
             const fullReply = completion?.choices?.[0]?.message?.content || ''
-
-            if (cancelled) {
-              try { controller.close() } catch { /* closed */ }
-              abortSignal.removeEventListener('abort', onAbort)
-              return
-            }
-
-            // Stream the reply word-by-word (fake streaming fallback)
             const chunks = fullReply.match(/(\S+\s*|\s+)/g) || [fullReply]
             let i = 0
             const sendChunk = () => {
@@ -430,16 +460,16 @@ export async function POST(req: NextRequest) {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive',
-          'X-Accel-Buffering': 'no', // disable proxy buffering
+          'X-Accel-Buffering': 'no',
         },
       })
     }
 
-    // ===== NON-STREAMING RESPONSE =====
+    // ===== Non-streaming response =====
     const completion = await zai.chat.completions.create({
       messages: finalMessages,
-      temperature: mode === 'agent' || mode === 'fix' ? 0.4 : 0.7,
-      max_tokens: mode === 'agent' || mode === 'fix' || mode.startsWith('convert') ? 8000 : 4000,
+      temperature: mode === 'fix' ? 0.4 : 0.7,
+      max_tokens: mode === 'fix' || mode.startsWith('convert') ? 8000 : 6000,
       stream: false,
       thinking: enableThinking ? { type: 'enabled' } : { type: 'disabled' },
     })
