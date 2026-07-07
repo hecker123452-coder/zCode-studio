@@ -343,10 +343,10 @@ export default function Home() {
 
   if (!isHydrated) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#1e1e1e] text-white">
+      <div className="flex h-screen items-center justify-center bg-[#1e1e1e] text-white animate-fade-in">
         <div className="text-center">
           <div className="mb-4 h-12 w-12 animate-spin rounded-full border-4 border-white/20 border-t-white mx-auto" />
-          <p className="text-sm text-white/60">Loading ZCode Studio...</p>
+          <p className="text-sm text-white/60 animate-pulse">Loading ZCode Studio...</p>
         </div>
       </div>
     )

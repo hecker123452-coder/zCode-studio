@@ -77,7 +77,7 @@ export function FileExplorer() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[var(--side-bar-bg)]">
+    <div data-allow-drag data-allow-context-menu className="flex h-full flex-col bg-[var(--side-bar-bg)]">
       {/* Header */}
       <div className="flex h-9 items-center justify-between px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         <span>Explorer</span>

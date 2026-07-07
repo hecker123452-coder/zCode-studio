@@ -248,11 +248,11 @@ function WelcomeScreen() {
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-[var(--editor-bg)] p-4 md:p-8">
-      <div className="w-full max-w-md text-center">
+      <div className="w-full max-w-md text-center animate-fade-in">
         <div className="mb-4 flex justify-center md:mb-6">
           <div className="relative">
-            <div className="absolute -inset-4 rounded-full bg-foreground/20 blur-2xl" />
-            <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--list-hover)] md:h-20 md:w-20">
+            <div className="absolute -inset-4 rounded-full bg-foreground/20 blur-2xl animate-pulse" />
+            <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--list-hover)] md:h-20 md:w-20 animate-scale-in">
               <Code2 className="h-8 w-8 text-white md:h-10 md:w-10" strokeWidth={1.5} />
             </div>
           </div>

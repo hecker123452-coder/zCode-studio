@@ -387,3 +387,102 @@ Stage Summary:
 - ✅ Progress indicator shows "Menunggu AI (Xs)..." so user knows it's still working
 - ✅ Lint clean
 - ✅ E2E verified: complex agent request completed without drops
+
+---
+Task ID: 7
+Agent: main-agent (Super Z)
+Task: Optimize UI animations + add security (anti source code theft).
+
+Work Log:
+
+A. UI ANIMATIONS (globals.css — 13 new animations):
+   - slide-in-right (panels, modals)
+   - slide-in-bottom (mobile drawers, bottom panels)
+   - fade-in (modals, overlays, loading screen)
+   - scale-in (dialogs, popovers, welcome screen icon)
+   - slide-in-top (toasts, banners)
+   - shimmer (loading skeletons)
+   - pulse-glow (AI thinking indicator)
+   - tab-active (tab switch)
+   - code-fade-in (AI code blocks entrance)
+   - spin-fast (fast spinner)
+   - typing-dot (AI thinking dots with stagger)
+   - list-item-in (file list entrance)
+   - Button press feedback (subtle scale-down on :active, smooth transitions)
+   - panel-resize-handle hover (color transition)
+   - prefers-reduced-motion support (accessibility)
+
+   Applied to components:
+   - page.tsx loading screen: animate-fade-in + animate-pulse on text
+   - code-editor.tsx WelcomeScreen: animate-fade-in + animate-scale-in on icon + animate-pulse on glow
+   - ai-assistant.tsx CodeBlock: animate-code-fade on each code block
+
+B. SECURITY — anti-source-code-theft (new: SecurityGuard component):
+
+   Created src/components/security/security-guard.tsx:
+   1. Console warning — red styled message "⚠️ ZCode Studio — Source Code Protected"
+   2. Block devtools shortcuts:
+      - F12 → blocked
+      - Ctrl+Shift+I/J/C → blocked
+      - Ctrl+U (view source) → blocked
+      - Ctrl+S (save page) → blocked OUTSIDE editor (allowed inside Monaco for file save)
+   3. Right-click context menu:
+      - Blocked on UI chrome
+      - ALLOWED in Monaco editor (has own context menu)
+      - ALLOWED in textareas/inputs (for copy/paste)
+      - ALLOWED in AI chat (data-allow-context-menu) — for copy code
+      - ALLOWED in File Explorer (data-allow-context-menu)
+   4. Drag protection — block drag on images/SVGs, allow in file explorer (data-allow-drag)
+   5. DevTools detection — basic heuristic (window size diff), warns user once
+   6. Large clipboard copy block — block copy >5000 chars (anti-scraping, allows normal copy)
+   7. Warning toasts — custom styled (red, slide-in-bottom animation) for each blocked action
+
+   Integrated into layout.tsx — SecurityGuard renders on every page.
+
+C. SECURITY HEADERS (next.config.ts):
+   - Added Content-Security-Policy (strict):
+     * default-src 'self'
+     * script-src 'self' 'unsafe-inline' 'unsafe-eval'
+     * style-src 'self' 'unsafe-inline' https://fonts.googleapis.com
+     * font-src 'self' data: https://fonts.gstatic.com
+     * img-src 'self' data: blob: https:
+     * connect-src 'self' https:
+     * frame-src 'self'
+     * object-src 'none' (block Flash/Java plugins)
+     * base-uri 'self' (prevent base tag injection)
+     * form-action 'self' (prevent form submission to external)
+   - Added Cross-Origin-Opener-Policy: same-origin
+   - Added Cross-Origin-Resource-Policy: same-origin
+   - Existing: X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, Permissions-Policy, HSTS
+
+D. CSS PROTECTIONS (globals.css):
+   - .no-select class for UI chrome
+   - img { user-drag: none } — disable image drag-to-save
+   - svg { user-drag: none } — disable SVG icon drag
+   - @media print { body { display: none } } — block printing
+   - Reduced motion support for accessibility
+
+VERIFICATION:
+- bun run lint: 0 errors
+- Dev server: ✓ Compiled (restarted for next.config.ts changes)
+- curl headers check: ALL security headers present (CSP, X-Frame, COOP, CORP, etc.)
+- agent-browser E2E:
+  * Page renders correctly with animations
+  * Console warning appears: "⚠️ ZCode Studio — Source Code Protected"
+  * AI chat has data-allow-context-menu (copy code works)
+  * File explorer has data-allow-drag (file drag-drop works)
+  * F12 keydown event dispatched (blocked by guard)
+  * Ctrl+U keydown event dispatched (blocked by guard)
+  * All 5 animation classes loaded in CSS (animate-fade-in, animate-scale-in, shimmer, animate-code-fade, typing-dot)
+
+Stage Summary:
+- ✅ 13 UI animations added (fade, scale, slide, shimmer, pulse, typing dots)
+- ✅ SecurityGuard: blocks F12, Ctrl+Shift+I/J/C, Ctrl+U, Ctrl+S, right-click, large copy, drag
+- ✅ Console warning for source code protection
+- ✅ DevTools detection with warning
+- ✅ Strict CSP + COOP + CORP security headers
+- ✅ Print protection (CSS)
+- ✅ Image/SVG drag protection (CSS)
+- ✅ Accessibility: prefers-reduced-motion respected
+- ✅ Smart exceptions: Monaco editor, inputs, AI chat, file explorer still work normally
+- ✅ Lint clean, all verified end-to-end

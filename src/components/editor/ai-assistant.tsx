@@ -614,7 +614,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       </div>
 
       {/* Messages */}
-      <div ref={viewportRef} className="flex-1 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
+      <div ref={viewportRef} data-allow-context-menu className="flex-1 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
         <div className={cn('p-3', isMobile && 'pb-4')}>
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-4 text-center md:py-6">
@@ -896,7 +896,7 @@ function CodeBlock({ code, lang, isMobile }: { code: string; lang: string; isMob
     setTimeout(() => setCopied(false), 2000)
   }
   return (
-    <div className="my-2 overflow-hidden rounded-lg border border-[var(--editor-border)]">
+    <div className="my-2 overflow-hidden rounded-lg border border-[var(--editor-border)] animate-code-fade">
       <div className="flex items-center justify-between border-b border-[var(--editor-border)] bg-[var(--list-hover)] px-2.5 py-1.5">
         <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{lang}</span>
         <button onClick={handleCopy} className={cn('flex items-center gap-1 rounded-full text-[10px] font-medium transition-colors active:scale-95', isMobile ? 'px-2.5 py-1 min-h-[28px]' : 'px-2 py-0.5', copied ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}>

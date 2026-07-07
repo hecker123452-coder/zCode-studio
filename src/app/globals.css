@@ -238,3 +238,189 @@ pre code {
   font-size: 12px;
   color: var(--muted-foreground);
 }
+
+/* ============================================
+   UI ANIMATIONS — smooth, professional polish
+   ============================================ */
+
+/* Slide-in from right (panels, modals) */
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Slide-in from bottom (mobile drawers, bottom panels) */
+@keyframes slide-in-bottom {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-in-bottom {
+  animation: slide-in-bottom 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Fade-in (modals, overlays) */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Scale-in (dialogs, popovers) */
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-scale-in {
+  animation: scale-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Slide-in from top (toasts, banners) */
+@keyframes slide-in-top {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-in-top {
+  animation: slide-in-top 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Shimmer effect (loading skeletons) */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--list-hover) 25%,
+    var(--list-active) 50%,
+    var(--list-hover) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Pulse glow (for AI thinking indicator) */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0); }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Button press feedback (subtle scale-down on active) */
+button:not(:disabled):active {
+  transform: scale(0.97);
+  transition: transform 0.08s ease-out;
+}
+button:not(:disabled) {
+  transition: transform 0.08s ease-out, background-color 0.15s ease-out, opacity 0.15s ease-out;
+}
+
+/* Tab switch animation */
+@keyframes tab-active {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
+}
+.tab-active-anim {
+  animation: tab-active 0.2s ease-out;
+}
+
+/* Code block entrance */
+@keyframes code-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-code-fade {
+  animation: code-fade-in 0.3s ease-out;
+}
+
+/* Spinner variants */
+@keyframes spin-fast {
+  to { transform: rotate(360deg); }
+}
+.animate-spin-fast {
+  animation: spin-fast 0.6s linear infinite;
+}
+
+/* Typing dots (AI thinking) */
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-4px); }
+}
+.typing-dot {
+  animation: typing-dot 1.4s infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* Panel resize handle hover */
+.panel-resize-handle {
+  transition: background-color 0.15s ease-out;
+}
+.panel-resize-handle:hover {
+  background-color: var(--primary) !important;
+}
+
+/* List item entrance (stagger) */
+@keyframes list-item-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-list-item {
+  animation: list-item-in 0.2s ease-out backwards;
+}
+
+/* ============================================
+   SECURITY — anti-theft protection (deterrents)
+   ============================================ */
+
+/* Disable text selection on UI chrome (editor still allows it) */
+.no-select {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Disable image drag (prevent drag-to-save) */
+img {
+  -webkit-user-drag: none;
+  -khtml-user-drag: none;
+  -moz-user-drag: none;
+  -o-user-drag: none;
+  user-drag: none;
+  pointer-events: auto;
+}
+
+/* Disable drag on SVG icons too */
+svg {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+/* Print protection — hide everything when printing */
+@media print {
+  body { display: none !important; }
+  html::before {
+    content: "Printing disabled — content is protected";
+    display: block;
+    font-size: 24px;
+    padding: 40px;
+  }
+}
+
+/* Reduce motion preference — respect accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
