@@ -9,19 +9,25 @@ function isValidId(id: string): boolean {
 }
 
 /**
- * Serve a deployed project page.
+ * Serve a deployed project page — ISOLATED via iframe sandbox wrapper.
  *
- * SECURITY:
- *   - Sets a strict `Content-Security-Policy` header to limit what the served
- *     HTML/JS can do. Inline scripts are allowed (`'unsafe-inline'`) because
- *     IndoCode transpiled output uses inline `<script>` — without it user
- *     code can't run. But remote scripts are NOT allowed by default.
- *   - Sets `X-Content-Type-Options: nosniff` to prevent MIME sniffing.
- *   - NOTE: This is defense-in-depth, NOT a complete sandbox. The served
- *     content is still on the SAME ORIGIN as the editor, so it CAN access
- *     localStorage. For real isolation, deployments should be moved to a
- *     separate subdomain. See `src/app/api/deploy/route.ts` file-level
- *     comment for the full security trade-off discussion.
+ * SECURITY ARCHITECTURE (upgraded):
+ *   Previously: served raw HTML at /d/:id on same origin as editor.
+ *   Problem: deployed scripts could access editor's localStorage (file storage).
+ *
+ *   Now: serves a WRAPPER page that embeds user HTML in a sandboxed iframe.
+ *   - iframe has `sandbox="allow-scripts allow-modals allow-popups allow-forms"`
+ *     but NOT `allow-same-origin` — so the iframe CANNOT access parent's
+ *     localStorage, cookies, or DOM.
+ *   - User HTML is passed as `srcdoc` (HTML attribute), so it's treated as
+ *     a unique opaque origin by the browser.
+ *   - CSP on the wrapper page blocks remote scripts/styles.
+ *
+ *   This is the same approach JSFiddle/CodePen use for their "full page view".
+ *
+ *   Trade-off: User code that needs `localStorage` (e.g., todo apps saving
+ *   state) will now have its OWN isolated localStorage, separate from the
+ *   editor. This is the correct behavior for deployed content.
  */
 export async function GET(
   _req: NextRequest,
@@ -51,8 +57,7 @@ export async function GET(
     )
   }
 
-  // Increment view count (best-effort, non-blocking — don't fail the request
-  // if the DB write fails)
+  // Increment view count (best-effort, non-blocking)
   try {
     await db.deployedProject.update({
       where: { id },
@@ -62,28 +67,116 @@ export async function GET(
     console.error('View count increment failed:', err)
   }
 
-  // Defense-in-depth CSP: allow inline scripts (required for IndoCode transpiled
-  // output), inline styles, and same-origin resources. Block remote scripts
-  // by default. Note: this doesn't isolate origin — see file-level comment.
+  // === Build wrapper page with sandboxed iframe ===
+  // The user's HTML is base64-encoded to safely embed in srcdoc attribute.
+  // The iframe sandbox restricts what the deployed code can do:
+  //   - allow-scripts: user code can run JS
+  //   - allow-modals: alert/confirm/prompt work
+  //   - allow-popups: window.open works
+  //   - allow-forms: form submissions work
+  //   - allow-pointer-lock: for games
+  //   - NOT allow-same-origin: CRITICAL — this prevents the iframe from
+  //     accessing the parent editor's localStorage/cookies/DOM.
+  const userHtmlBase64 = Buffer.from(data.html, 'utf-8').toString('base64')
+
+  const wrapperHtml = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(data.title)} — ZCode Deploy</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
+    body { font-family: system-ui, -apple-system, sans-serif; }
+    .deploy-banner {
+      background: #1a1a2e;
+      color: #4ade80;
+      padding: 6px 12px;
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #2a2a4e;
+    }
+    .deploy-banner a {
+      color: #6366f1;
+      text-decoration: none;
+    }
+    .deploy-banner a:hover { text-decoration: underline; }
+    .sandbox-badge {
+      background: #4ade80;
+      color: #1a1a2e;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-weight: bold;
+      font-size: 9px;
+    }
+    iframe#content {
+      width: 100%;
+      height: calc(100vh - 28px);
+      border: none;
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <div class="deploy-banner">
+    <span>
+      <span class="sandbox-badge">SANDBOXED</span>
+      Deployed via ZCode Studio · ${escapeHtml(data.fileName)} · ${data.views} views
+    </span>
+    <a href="/">← Back to Editor</a>
+  </div>
+  <iframe
+    id="content"
+    sandbox="allow-scripts allow-modals allow-popups allow-forms allow-pointer-lock"
+    style="width:100%; height:calc(100vh - 28px); border:none;"
+  ></iframe>
+  <script>
+    // Decode base64 HTML and inject as srcdoc
+    (function() {
+      var html = atob("${userHtmlBase64}");
+      var iframe = document.getElementById('content');
+      iframe.srcdoc = html;
+    })();
+  </script>
+</body>
+</html>`
+
+  // Strict CSP for the WRAPPER page (not the iframe content, which has its own
+  // origin due to sandbox). Block remote scripts entirely.
   const csp = [
-    "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
-    "img-src 'self' data: blob: https: http:",
-    "font-src 'self' data: https:",
-    "connect-src 'self' https: http:",
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "frame-src 'self' data: blob:",
   ].join('; ')
 
-  return new NextResponse(data.html, {
+  return new NextResponse(wrapperHtml, {
     status: 200,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=60',
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': csp,
-      // Referrer-Policy: don't leak the deployment URL to remote hosts the
-      // deployed page might link to
       'Referrer-Policy': 'no-referrer',
+      'X-Frame-Options': 'SAMEORIGIN', // prevent this wrapper from being embedded elsewhere
+      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     },
   })
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
 }
 
 export async function DELETE(

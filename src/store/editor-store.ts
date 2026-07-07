@@ -118,6 +118,25 @@ interface EditorState {
   togglePinTab: (tabId: string) => void
   setAiHelperOpen: (open: boolean) => void
   setAiQuickCodeOpen: (open: boolean) => void
+
+  // === Source Control (real) ===
+  // Track "saved" content per file — diff against current to detect modifications
+  savedSnapshots: Record<string, string> // fileId -> last committed content
+  commits: Commit[]
+  createCommit: (message: string) => string // returns commit id
+  restoreCommit: (commitId: string) => void
+  getModifiedFiles: () => Array<{ fileId: string; file: FileNode; status: 'modified' | 'added' | 'deleted' }>
+  stageFile: (fileId: string) => void
+  unstageFile: (fileId: string) => void
+  stagedFileIds: string[]
+  discardChanges: (fileId: string) => void
+}
+
+interface Commit {
+  id: string
+  message: string
+  createdAt: number
+  files: Array<{ fileId: string; name: string; content: string; path: string }>
 }
 
 const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -745,6 +764,11 @@ export const useEditorStore = create<EditorState>()(
       aiHelperOpen: false,
       aiQuickCodeOpen: false,
 
+      // Source control initial state
+      savedSnapshots: {},
+      commits: [],
+      stagedFileIds: [],
+
       createFile: (name, parentId) => {
         const id = generateId()
         const now = Date.now()
@@ -1103,6 +1127,144 @@ export const useEditorStore = create<EditorState>()(
       })),
       setAiHelperOpen: (aiHelperOpen) => set({ aiHelperOpen }),
       setAiQuickCodeOpen: (aiQuickCodeOpen) => set({ aiQuickCodeOpen }),
+
+      // === Source Control (real implementation) ===
+      // savedSnapshots tracks the "last committed" content per file.
+      // getModifiedFiles compares current content vs snapshot to detect changes.
+      createCommit: (message) => {
+        const state = get()
+        const id = `commit-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
+        const allFiles = Object.values(state.files).filter(f => f.type === 'file')
+
+        // Snapshot ALL files at commit time — this becomes the restore point
+        const fileSnapshots = allFiles.map(f => ({
+          fileId: f.id,
+          name: f.name,
+          content: f.content || '',
+          path: get().getPath(f.id),
+        }))
+
+        const newSnapshots: Record<string, string> = {}
+        for (const f of allFiles) {
+          newSnapshots[f.id] = f.content || ''
+        }
+
+        const commit: Commit = {
+          id,
+          message: message.trim() || `Commit at ${new Date().toLocaleString('id-ID')}`,
+          createdAt: Date.now(),
+          files: fileSnapshots,
+        }
+
+        set({
+          commits: [commit, ...state.commits].slice(0, 50), // keep last 50 commits
+          savedSnapshots: newSnapshots,
+          stagedFileIds: [], // clear staging area after commit
+        })
+
+        return id
+      },
+
+      restoreCommit: (commitId) => {
+        const state = get()
+        const commit = state.commits.find(c => c.id === commitId)
+        if (!commit) return
+
+        // Restore each file's content from the commit snapshot
+        const newFiles = { ...state.files }
+        for (const snapshot of commit.files) {
+          if (newFiles[snapshot.fileId]) {
+            newFiles[snapshot.fileId] = {
+              ...newFiles[snapshot.fileId],
+              content: snapshot.content,
+              updatedAt: Date.now(),
+            }
+          }
+        }
+
+        // Update savedSnapshots to match this commit
+        const newSnapshots: Record<string, string> = {}
+        for (const snapshot of commit.files) {
+          newSnapshots[snapshot.fileId] = snapshot.content
+        }
+
+        set({
+          files: newFiles,
+          savedSnapshots: newSnapshots,
+          stagedFileIds: [],
+        })
+      },
+
+      getModifiedFiles: () => {
+        const state = get()
+        const allFiles = Object.values(state.files).filter(f => f.type === 'file')
+        const result: Array<{ fileId: string; file: FileNode; status: 'modified' | 'added' | 'deleted' }> = []
+
+        for (const file of allFiles) {
+          const snapshot = state.savedSnapshots[file.id]
+          if (snapshot === undefined) {
+            // File exists now but no snapshot = added
+            result.push({ fileId: file.id, file, status: 'added' })
+          } else if (snapshot !== (file.content || '')) {
+            // Content changed = modified
+            result.push({ fileId: file.id, file, status: 'modified' })
+          }
+        }
+
+        // Check for deleted files (snapshot exists but file doesn't)
+        for (const fileId of Object.keys(state.savedSnapshots)) {
+          if (!state.files[fileId]) {
+            // File was deleted — create a stub for UI display
+            result.push({
+              fileId,
+              file: {
+                id: fileId,
+                name: '(deleted)',
+                type: 'file',
+                parentId: null,
+                content: '',
+                createdAt: 0,
+                updatedAt: 0,
+              },
+              status: 'deleted',
+            })
+          }
+        }
+
+        return result
+      },
+
+      stageFile: (fileId) => {
+        set(state => ({
+          stagedFileIds: state.stagedFileIds.includes(fileId)
+            ? state.stagedFileIds
+            : [...state.stagedFileIds, fileId],
+        }))
+      },
+
+      unstageFile: (fileId) => {
+        set(state => ({
+          stagedFileIds: state.stagedFileIds.filter(id => id !== fileId),
+        }))
+      },
+
+      discardChanges: (fileId) => {
+        const state = get()
+        const snapshot = state.savedSnapshots[fileId]
+        if (snapshot !== undefined && state.files[fileId]) {
+          // Restore file content to last committed version
+          set(s => ({
+            files: {
+              ...s.files,
+              [fileId]: {
+                ...s.files[fileId],
+                content: snapshot,
+                updatedAt: Date.now(),
+              },
+            },
+          }))
+        }
+      },
     }),
     {
       name: 'zcode-studio-storage',
@@ -1112,6 +1274,9 @@ export const useEditorStore = create<EditorState>()(
         openTabs: state.openTabs,
         activeTabId: state.activeTabId,
         settings: state.settings,
+        // Persist source control state too
+        savedSnapshots: state.savedSnapshots,
+        commits: state.commits,
       }),
       merge: (persisted, current) => {
         // Always force theme/uiTheme to the locked defaults; ignore any persisted values.

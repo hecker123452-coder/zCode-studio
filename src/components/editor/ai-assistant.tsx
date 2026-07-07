@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { buildProjectContext } from '@/lib/ai/context-builder'
 import { parseAgentFiles, parseThinkingSteps } from '@/lib/ai/prompts'
+import { usePersistedAIChat, type PersistedChatMessage } from '@/hooks/use-persisted-ai-chat'
 
 interface ProgressStep {
   text: string
@@ -23,18 +24,7 @@ interface ProgressStep {
   icon?: LucideIcon
 }
 
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  isAgentDone?: boolean
-  appliedFiles?: string[]
-  thinkingSteps?: string[]
-  reasoning?: string
-  usedWebSearch?: boolean
-  executionPlan?: string[]
-  review?: string
-  reviewVerdict?: 'approved' | 'needs_refinement' | 'unknown'
-}
+type ChatMessage = PersistedChatMessage
 
 interface QuickAction {
   icon: LucideIcon
@@ -62,12 +52,17 @@ interface AIAssistantProps {
 // (parseAgentFiles & parseThinkingSteps now imported from @/lib/ai/prompts)
 
 export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  // Persisted chat state (survives page refresh)
+  const {
+    messages, memory, memoryRef, isHydrated,
+    addMessage, updateLastMessage, clearMessages, addMemory, clearMemory, setMessages,
+  } = usePersistedAIChat()
+
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [mode, setMode] = useState<'normal' | 'agent'>('normal')
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([])
-  const [memoryCount, setMemoryCount] = useState(0)
+  const [memoryCount, setMemoryCount] = useState(memory.length)
   const [currentPhase, setCurrentPhase] = useState<'idle' | 'connecting' | 'thinking' | 'searching' | 'planning' | 'writing' | 'reviewing' | 'refining' | 'applying' | 'done'>('idle')
   const [liveReasoning, setLiveReasoning] = useState<string>('')
   const [executionPlan, setExecutionPlan] = useState<string[]>([])
@@ -76,7 +71,6 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
   const [reviewResult, setReviewResult] = useState<string | null>(null)
   const [reviewVerdict, setReviewVerdict] = useState<'approved' | 'needs_refinement' | 'unknown' | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
-  const memoryRef = useRef<string[]>([])
   const replyRef = useRef<string>('')
   const reasoningRef = useRef<string>('')
   // Track the current AbortController so we can cancel on unmount / new chat / new message
@@ -84,6 +78,9 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
   // Track the abort timeout so we can clear it in finally (was previously leaked on error path)
   const abortTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
+
+  // Sync memoryCount when memory changes
+  useEffect(() => { setMemoryCount(memory.length) }, [memory.length])
 
   const activeTabId = useEditorStore(s => s.activeTabId)
   const openTabs = useEditorStore(s => s.openTabs)
@@ -122,7 +119,8 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
 
   const handleNewChat = useCallback(() => {
     haptic(15)
-    setMessages([])
+    clearMessages()
+    clearMemory()
     setProgressSteps([])
     setCurrentPhase('idle')
     setLiveReasoning('')
@@ -133,18 +131,17 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
     setReviewVerdict(null)
     reasoningRef.current = ''
     replyRef.current = ''
-    memoryRef.current = []
-    setMemoryCount(0)
     setInput('')
     setLoading(false)
     toast.success('Chat baru dimulai')
-  }, [haptic])
+  }, [haptic, clearMessages, clearMemory])
 
   const handleDeleteChat = useCallback(() => {
     if (messages.length === 0) return
     haptic([10, 30, 10])
     if (confirm('Hapus semua percakapan? Tindakan ini tidak dapat dibatalkan.')) {
-      setMessages([])
+      clearMessages()
+      clearMemory()
       setProgressSteps([])
       setCurrentPhase('idle')
       setLiveReasoning('')
@@ -155,13 +152,11 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       setReviewVerdict(null)
       reasoningRef.current = ''
       replyRef.current = ''
-      memoryRef.current = []
-      setMemoryCount(0)
       setInput('')
       setLoading(false)
       toast.success('Chat dihapus')
     }
-  }, [haptic, messages.length])
+  }, [haptic, messages.length, clearMessages, clearMemory])
 
   const sendMessage = async (text?: string, action?: QuickAction) => {
     const content = (text || input).trim()
@@ -183,7 +178,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
 
     haptic(15)
     setInput('')
-    const userMsg: ChatMessage = { role: 'user', content }
+    const userMsg: ChatMessage = { role: 'user', content, timestamp: Date.now() }
     const baseMessages = [...messages, userMsg]
     setMessages(baseMessages)
     setLoading(true)
@@ -263,7 +258,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       let usedWebSearch = false
 
       // Show a placeholder assistant message that we'll update in real-time
-      setMessages([...baseMessages, { role: 'assistant', content: '' }])
+      setMessages([...baseMessages, { role: 'assistant', content: '', timestamp: Date.now() }])
 
       while (true) {
         const { done, value } = await reader.read()
@@ -421,9 +416,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
           const summary = summaryLines.length > 0 ? summaryLines.join('\n') : `Selesai mengubah ${appliedFiles.length} file`
 
           // Single memory push (was previously double-pushed)
-          memoryRef.current.push(`User: ${content}\nAI applied: ${appliedFiles.join(', ')}`)
-          if (memoryRef.current.length > 10) memoryRef.current.shift()
-          setMemoryCount(memoryRef.current.length)
+          addMemory(`User: ${content}\nAI applied: ${appliedFiles.join(', ')}`)
 
           haptic([10, 30, 10])
           setProgressSteps([])
@@ -431,6 +424,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
           setMessages([...baseMessages, {
             role: 'assistant',
             content: summary,
+            timestamp: Date.now(),
             isAgentDone: true,
             appliedFiles,
             thinkingSteps: thinkingSteps.length > 0 ? thinkingSteps : undefined,
@@ -448,15 +442,14 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       setMessages([...baseMessages, {
         role: 'assistant',
         content: reply,
+        timestamp: Date.now(),
         reasoning: finalReasoning || undefined,
         usedWebSearch,
         executionPlan: finalPlan,
         review: finalReview,
         reviewVerdict: finalVerdict,
       }])
-      memoryRef.current.push(`User: ${content}\nAI: ${reply.substring(0, 200)}`)
-      if (memoryRef.current.length > 10) memoryRef.current.shift()
-      setMemoryCount(memoryRef.current.length)
+      addMemory(`User: ${content}\nAI: ${reply.substring(0, 200)}`)
       haptic([10, 30, 10])
     } catch (error: any) {
       console.error(error)
@@ -469,7 +462,7 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
         errMsg = 'Server AI sedang sibuk. Tunggu sebentar lalu coba lagi.'
       }
       toast.error(errMsg)
-      setMessages([...baseMessages, { role: 'assistant', content: errMsg }])
+      setMessages([...baseMessages, { role: 'assistant', content: errMsg, timestamp: Date.now() }])
     } finally {
       // Always clear the abort timeout, even on error (was previously leaked on error path)
       if (abortTimeoutRef.current) {

@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/context-menu'
 import { toast } from 'sonner'
 import { FILE_TEMPLATES, TEMPLATE_CATEGORIES, type FileTemplate } from '@/lib/editor/file-templates'
+import { ProjectTemplateDialog } from '@/components/editor/project-template-dialog'
 
 type SortMode = 'name-asc' | 'name-desc' | 'modified-desc'
 
@@ -32,6 +33,7 @@ export function FileExplorer() {
   const [creatingIn, setCreatingIn] = useState<{ parentId: string | null; type: 'file' | 'folder' } | null>(null)
   const [sortMode, setSortMode] = useState<SortMode>('name-asc')
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
+  const [projectTemplateOpen, setProjectTemplateOpen] = useState(false)
   const { openFromDeviceFSAccess } = useFileOperations()
 
   const sortFileIds = (fileIds: string[]): string[] => {
@@ -162,9 +164,16 @@ export function FileExplorer() {
         <button
           onClick={() => setTemplatePickerOpen(true)}
           className="rounded p-1 text-muted-foreground hover:bg-[var(--list-hover)] hover:text-foreground"
-          title="Dari Template"
+          title="Dari Template (single file)"
         >
           <FileType2 className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => setProjectTemplateOpen(true)}
+          className="rounded p-1 text-emerald-400 hover:bg-[var(--list-hover)]"
+          title="New Project (multi-file)"
+        >
+          <FolderPlus className="h-4 w-4" />
         </button>
         <button
           onClick={() => setCreatingIn({ parentId: null, type: 'folder' })}
@@ -220,6 +229,9 @@ export function FileExplorer() {
           onClose={() => setTemplatePickerOpen(false)}
         />
       )}
+
+      {/* Project Template Dialog (multi-file) */}
+      <ProjectTemplateDialog open={projectTemplateOpen} onOpenChange={setProjectTemplateOpen} />
     </div>
   )
 }
