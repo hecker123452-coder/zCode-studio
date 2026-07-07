@@ -318,6 +318,24 @@ export async function POST(req: NextRequest) {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ phase })}\n\n`))
             } catch { /* closed */ }
 
+            // Start keepalive timer — sends ping every 5s while waiting for SDK response.
+            // This prevents proxy/browser from dropping the connection during the
+            // "extended thinking" gap where SDK is thinking but not sending data yet.
+            let keepaliveCounter = 0
+            const keepaliveInterval = setInterval(() => {
+              if (cancelled) {
+                clearInterval(keepaliveInterval)
+                return
+              }
+              keepaliveCounter++
+              try {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                  keepalive: true,
+                  progress: `Menunggu AI (${keepaliveCounter * 5}s)...`,
+                })}\n\n`))
+              } catch { /* closed */ }
+            }, 5000)
+
             const completion = await zai.chat.completions.create({
               messages: finalMessages,
               temperature: mode === 'fix' ? 0.4 : 0.7,
@@ -340,10 +358,17 @@ export async function POST(req: NextRequest) {
               const decoder = new TextDecoder()
               let buffer = ''
               let fullReply = ''
+              let gotFirstChunk = false
 
               while (!cancelled) {
                 const { done, value } = await reader.read()
                 if (done) break
+
+                // Stop keepalive on first real data chunk
+                if (!gotFirstChunk) {
+                  gotFirstChunk = true
+                  clearInterval(keepaliveInterval)
+                }
 
                 buffer += decoder.decode(value, { stream: true })
                 const lines = buffer.split('\n')
@@ -375,6 +400,7 @@ export async function POST(req: NextRequest) {
                     }
 
                     if (parsed.choices?.[0]?.finish_reason === 'stop') {
+                      clearInterval(keepaliveInterval)
                       try {
                         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ phase: 'done' })}\n\n`))
                         controller.enqueue(encoder.encode('data: [DONE]\n\n'))
@@ -393,6 +419,7 @@ export async function POST(req: NextRequest) {
               }
 
               if (!cancelled) {
+                clearInterval(keepaliveInterval)
                 try {
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ phase: 'done' })}\n\n`))
                   controller.enqueue(encoder.encode('data: [DONE]\n\n'))
@@ -407,6 +434,7 @@ export async function POST(req: NextRequest) {
             }
 
             // Fallback: non-streaming
+            clearInterval(keepaliveInterval)
             const fullReply = completion?.choices?.[0]?.message?.content || ''
             const chunks = fullReply.match(/(\S+\s*|\s+)/g) || [fullReply]
             let i = 0
@@ -442,6 +470,7 @@ export async function POST(req: NextRequest) {
             sendChunk()
           } catch (err) {
             console.error('[ai] Stream error:', err)
+            clearInterval(keepaliveInterval)
             try {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Stream error: ' + (err as Error).message })}\n\n`))
               controller.close()
@@ -451,6 +480,7 @@ export async function POST(req: NextRequest) {
         },
         cancel() {
           cancelled = true
+          clearInterval(keepaliveInterval)
           abortSignal.removeEventListener('abort', onAbort)
         },
       })

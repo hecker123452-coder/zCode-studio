@@ -326,3 +326,64 @@ Stage Summary:
 - ✅ Deploy: sandboxed iframe isolation (no more localStorage access from deployed HTML)
 - ✅ Lint clean (0 errors)
 - ✅ All 5 features verified end-to-end
+
+---
+Task ID: 6
+Agent: main-agent (Super Z)
+Task: Fix connection drops during long AI responses (agent mode + normal mode).
+
+Root Cause Analysis:
+1. Client-side timeout was 240s (4 min) — too short for multi-step agent (5-8 min)
+2. NO keepalive pings — during planning/review phases (non-streaming LLM calls, 30-60s each), NO data was sent to client. Proxy/browser thought connection was dead and dropped it.
+3. No retry mechanism on connection failure — user had to manually retype request.
+
+Fixes Applied:
+
+1. SSE Keepalive Pings (agent-loop.ts):
+   - Created startKeepalive() helper — sends ping event every 5 seconds with progress message "Menunggu AI (Xs)..."
+   - Added keepalive to ALL non-streaming phases: search, planning, review, refine
+   - Keepalive auto-stops when first real content chunk arrives (during streaming phases)
+   - Added AgentEvent.keepalive + AgentEvent.progress fields
+
+2. SSE Keepalive Pings (route.ts non-agent mode):
+   - Added setInterval keepalive (5s) that starts BEFORE zai.chat.completions.create() call
+   - Covers the "extended thinking" gap where SDK is thinking but not sending data
+   - Auto-stops on first real data chunk from SDK stream
+   - Cleaned up in all exit paths: success, error, cancel, fallback
+
+3. Client-side timeout increased (ai-assistant.tsx):
+   - 240000ms (4 min) → 600000ms (10 min) — matches server maxDuration
+   - Comment explains why: extended thinking + multi-step agent can take 5-8 min
+
+4. Better error messages + retry (ai-assistant.tsx):
+   - CONNECTION error: "Koneksi terputus saat AI masih nulis. Ini biasanya karena response terlalu panjang atau koneksi internet nggak stabil. Coba lagi ya."
+   - TIMEOUT error: "Permintaan terlalu lama (timeout 10 menit). Coba permintaan yang lebih singkat, atau pecah jadi beberapa bagian."
+   - STREAM_ERROR: new error type for stream interruption
+   - Added "Coba Lagi" (Retry) button in toast — one click re-sends the same message
+   - Toast duration 6s (was default) to give user time to click retry
+
+5. Client-side keepalive handling (ai-assistant.tsx):
+   - Added keepalive event handler — updates progress text "Menunggu AI (15s)..." so user sees it's still working
+   - Added progress event handler — updates current step text with human-readable status
+
+VERIFICATION:
+- bun run lint: 0 errors
+- curl test (non-agent stream): real token streaming works, keepalive not triggered (fast response)
+- curl test (agent mode "buat komponen react button dengan variants lengkap"):
+  * phase: search → phase: plan → keepalive "Menunggu AI (5s)..." → phase: implement → phase: verify → keepalive "Menunggu AI (5s)..." → keepalive "Menunggu AI (10s)..." → phase: refine → content streaming
+  * Keepalive pings working perfectly during long phases
+  * NO connection drops
+- agent-browser E2E (Agent Pro mode, "buat function factorial dengan recursion"):
+  * Completed successfully without connection drop
+  * AI produced: 7-step plan, production-grade factorial.js with FactorialError class, memoization (WeakMap), input validation, JSDoc with examples
+  * Execution Plan checklist showed 6/7 progress
+  * No "gagal terhubung" error
+
+Stage Summary:
+- ✅ Keepalive pings every 5s during long phases (search, plan, review, refine, extended thinking)
+- ✅ Client timeout 4min → 10min (matches server)
+- ✅ Retry button on error toast (one-click re-send)
+- ✅ Better error messages explaining why it failed + how to fix
+- ✅ Progress indicator shows "Menunggu AI (Xs)..." so user knows it's still working
+- ✅ Lint clean
+- ✅ E2E verified: complex agent request completed without drops

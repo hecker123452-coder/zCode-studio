@@ -216,8 +216,11 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
       // Stream request — real-time progress with extended thinking
       const controller = new AbortController()
       abortRef.current = controller
-      // Extended thinking needs more time — 4 min timeout
-      abortTimeoutRef.current = setTimeout(() => controller.abort(), 240000)
+      // Timeout 10 minutes — matches server maxDuration (600s).
+      // Extended thinking + multi-step agent (plan → execute → review → refine)
+      // can take 5-8 minutes for complex requests. Keepalive pings prevent
+      // proxy/browser from dropping the connection during long phases.
+      abortTimeoutRef.current = setTimeout(() => controller.abort(), 600000)
       const timeoutId = abortTimeoutRef.current
 
       let response: Response
@@ -278,23 +281,51 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
           try {
             const parsed = JSON.parse(dataStr)
 
+            // Handle keepalive pings — ignore them (they just keep connection alive)
+            if (parsed.keepalive) {
+              // Update progress text if provided, but don't change phase
+              if (parsed.progress) {
+                // Update the current progress step text with the keepalive message
+                // This shows the user "Menunggu AI (15s)..." etc. so they know it's still working
+                setProgressSteps(prev => {
+                  if (prev.length === 0) return prev
+                  const last = prev[prev.length - 1]
+                  // Only update if still in progress (not done)
+                  if (last.done) return prev
+                  return [...prev.slice(0, -1), { ...last, text: parsed.progress! }]
+                })
+              }
+              continue
+            }
+
+            // Handle progress messages (human-readable status updates)
+            if (parsed.progress && !parsed.phase) {
+              setProgressSteps(prev => {
+                if (prev.length === 0) return [{ text: parsed.progress, done: false, icon: Loader2 }]
+                const last = prev[prev.length - 1]
+                if (last.done) return [...prev, { text: parsed.progress, done: false, icon: Loader2 }]
+                return [...prev.slice(0, -1), { ...last, text: parsed.progress }]
+              })
+              continue
+            }
+
             // Handle phase indicators (multi-step agent phases)
             if (parsed.phase) {
               if (parsed.phase === 'search') {
                 setCurrentPhase('searching')
-                setProgressSteps([{ text: 'Mencari dokumentasi terbaru...', done: false, icon: Globe }])
+                setProgressSteps([{ text: parsed.progress || 'Mencari dokumentasi terbaru...', done: false, icon: Globe }])
               } else if (parsed.phase === 'plan') {
                 setCurrentPhase('planning')
-                setProgressSteps([{ text: 'Menyusun execution plan...', done: false, icon: ClipboardList }])
+                setProgressSteps([{ text: parsed.progress || 'Menyusun execution plan...', done: false, icon: ClipboardList }])
               } else if (parsed.phase === 'implement') {
                 setCurrentPhase('writing')
-                setProgressSteps([{ text: 'Menulis kode production-grade...', done: false, icon: Terminal }])
+                setProgressSteps([{ text: parsed.progress || 'Menulis kode production-grade...', done: false, icon: Terminal }])
               } else if (parsed.phase === 'verify') {
                 setCurrentPhase('reviewing')
-                setProgressSteps([{ text: 'Self-review kode...', done: false, icon: ShieldCheck }])
+                setProgressSteps([{ text: parsed.progress || 'Self-review kode...', done: false, icon: ShieldCheck }])
               } else if (parsed.phase === 'refine') {
                 setCurrentPhase('refining')
-                setProgressSteps([{ text: 'Refining kode berdasarkan review...', done: false, icon: Wrench }])
+                setProgressSteps([{ text: parsed.progress || 'Refining kode berdasarkan review...', done: false, icon: Wrench }])
               } else if (parsed.phase === 'thinking') {
                 setCurrentPhase('thinking')
                 setProgressSteps([{ text: 'AI sedang berpikir mendalam...', done: false, icon: Brain }])
@@ -454,14 +485,27 @@ export function AIAssistant({ onClose, isMobile = false }: AIAssistantProps) {
     } catch (error: any) {
       console.error(error)
       let errMsg = 'Terjadi kesalahan. Silakan coba lagi.'
+      let canRetry = true
       if (error?.name === 'AbortError' || error?.message === 'TIMEOUT') {
-        errMsg = 'Permintaan terlalu lama (timeout 4 menit). Coba permintaan yang lebih singkat.'
+        errMsg = 'Permintaan terlalu lama (timeout 10 menit). Coba permintaan yang lebih singkat, atau pecah jadi beberapa bagian.'
+        canRetry = true
       } else if (error?.message === 'CONNECTION') {
-        errMsg = 'Gagal terhubung ke server. Periksa koneksi internet lalu coba lagi.'
+        errMsg = 'Koneksi terputus saat AI masih nulis. Ini biasanya karena response terlalu panjang atau koneksi internet nggak stabil. Coba lagi ya.'
+        canRetry = true
       } else if (error?.message === 'AI request failed') {
-        errMsg = 'Server AI sedang sibuk. Tunggu sebentar lalu coba lagi.'
+        errMsg = 'Server AI sedang sibuk atau error. Tunggu sebentar lalu coba lagi.'
+        canRetry = true
+      } else if (error?.message === 'STREAM_ERROR') {
+        errMsg = 'Stream AI terputus. Response mungkin terlalu panjang. Coba lagi.'
+        canRetry = true
       }
-      toast.error(errMsg)
+      toast.error(errMsg, {
+        duration: 6000,
+        action: canRetry ? {
+          label: 'Coba Lagi',
+          onClick: () => sendMessage(content, action),
+        } : undefined,
+      })
       setMessages([...baseMessages, { role: 'assistant', content: errMsg, timestamp: Date.now() }])
     } finally {
       // Always clear the abort timeout, even on error (was previously leaked on error path)
