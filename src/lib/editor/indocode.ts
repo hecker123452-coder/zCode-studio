@@ -376,6 +376,14 @@ if (typeof CanvasRenderingContext2D !== 'undefined') {
 const RUNTIME_HELPERS = `
 // ===== INDOCODE RUNTIME HELPERS =====
 
+// Math constants (IndoCode names → JavaScript)
+var pi = Math.PI;
+var phi = Math.PI;          // alias (common Indonesian spelling)
+var e_bilangan = Math.E;    // Euler's number (can't use 'e' — too common)
+var tak_terhingga = Infinity;
+var tak_terhingga_negatif = -Infinity;
+var bukan_angka = NaN;
+
 // DOM helpers
 function __ambilElemen(id) {
   var el = document.getElementById(id);

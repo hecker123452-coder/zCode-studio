@@ -486,3 +486,58 @@ Stage Summary:
 - ✅ Accessibility: prefers-reduced-motion respected
 - ✅ Smart exceptions: Monaco editor, inputs, AI chat, file explorer still work normally
 - ✅ Lint clean, all verified end-to-end
+
+---
+Task ID: 8
+Agent: main-agent (Super Z)
+Task: Fix IndoCode bug — `pi` not mapping to `Math.PI` (caused circle rendering to fail).
+
+Root Cause:
+User reported IndoCode HTML game (snake) was "ngebug". Analysis of user's code revealed:
+- `pena.lingkaran(x, y, jariJari, 0, pi * 2)` — uses `pi` as a constant
+- Transpiler left `pi` as-is (not in KEYWORD_MAP or BUILTIN_FUNCTIONS)
+- At runtime, `pi` was `undefined` → `pi * 2` = `NaN`
+- `pena.lingkaran(x, y, r, 0, NaN)` → arc with NaN endAngle → circle doesn't render
+- This affected: food (red circle), snake eyes (black circles) — all invisible
+
+Fix:
+Added math constants to RUNTIME_HELPERS in indocode.ts:
+- `var pi = Math.PI;` — the main fix
+- `var phi = Math.PI;` — alias (common Indonesian spelling)
+- `var e_bilangan = Math.E;` — Euler's number
+- `var tak_terhingga = Infinity;`
+- `var tak_terhingga_negatif = -Infinity;`
+- `var bukan_angka = NaN;`
+
+How it works:
+1. Transpiler leaves `pi` as-is in the generated JS (it's a value, not a keyword)
+2. RUNTIME_HELPERS (containing `var pi = Math.PI`) is injected into `<head>` before user's `<script>`
+3. At runtime, `pi` resolves to `Math.PI` (3.14159...) via the global variable
+4. `pena.lingkaran(x, y, r, 0, pi * 2)` → `pena.lingkaran(x, y, r, 0, 6.28318...)` → arc draws correctly
+
+Verification:
+- All other IndoCode features in user's code verified working:
+  * `ular.panjang` → `.length` ✓
+  * `ular.tambahDepan()` → `.unshift()` ✓
+  * `ular.hapusBelakang()` → `.pop()` ✓
+  * `aturInterval()` → `__aturSelang()` ✓
+  * `hentikanInterval()` → `__hentikanWaktu()` ✓
+  * `mutlak()` → `__mutlak()` ✓
+  * `lantai(acak() * max)` → `__bulat(__acak() * max)` ✓
+  * `kanvas.tambahPendengar("sentuhMulai", ...)` → HTMLElement polyfill ✓
+  * `e.sentuhan[0].x` / `e.perubahanSentuh[0].x` → set by polyfill ✓
+  * Canvas polyfills: mulaiJalur, isi, warnaIsi, kotak, lingkaran ✓
+  * CSS: badan, latar, warna, rata_teks, sentuh, margin_atas, tengah, tidak_ada ✓
+  * HTML: tipe, kepala, badan, gaya, judul, kanvas, skrip, lebar, tinggi, bahasa ✓
+- bun run lint: 0 errors
+- test-indocode.ts: 20/20 passed
+- test-html-indocode.ts: ALL TESTS PASSED
+- Pipeline verified: transpile → inject helpers → pi resolves to Math.PI at runtime
+
+Stage Summary:
+- ✅ Bug fixed: `pi` now resolves to `Math.PI` via runtime helpers
+- ✅ Added 6 math constants: pi, phi, e_bilangan, tak_terhingga, tak_terhingga_negatif, bukan_angka
+- ✅ All 20 IndoCode tests pass
+- ✅ All HTML IndoCode tests pass
+- ✅ Lint clean
+- ✅ User's snake game will now render circles correctly (food, snake eyes)

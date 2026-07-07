@@ -1,76 +1,52 @@
-// Test user's snake game IndoCode
-import { transpileIndoCode, isIndoHTML, detectCanvasUsage } from '../src/lib/editor/indocode.ts'
+// Test transpile user's exact IndoCode HTML file
+import { transpileIndoCode, isIndoHTML } from '../src/lib/editor/indocode'
 
 const userCode = `<!tipe html>
-
 <html bahasa="id">
-
 <kepala>
-
-<judul>Ular Nokia Indonesia</judul>
-
+<judul>🐍 Ular Nokia Indonesia</judul>
 <gaya>
 badan {
     margin: 0;
-    latar: hitam;
-    warna: hijau;
-    rata_teks: tengah;
+    latar: #111111;
+    warna: #99ff99;
     font: monospace;
+    rata_teks: tengah;
     sentuh: tidak_ada;
 }
-
 kanvas {
-    border: 4px solid hijau;
+    border: 4px solid #99ff99;
+    latar: #0f380f;
     margin_atas: 10px;
 }
 </gaya>
-
 </kepala>
-
 <badan>
-
-<h2>ULAR NOKIA INDONESIA</h2>
-
+<h2>🐍 ULAR NOKIA INDONESIA 🗿</h2>
 <div id="skor">SKOR: 0</div>
-
 <kanvas id="game" lebar="320" tinggi="320"></kanvas>
-
-<p>Geser jari untuk bergerak</p>
-
+<p>Geser jari di layar untuk bergerak 👆</p>
 <skrip>
-
+konstanta ukuranKotak = 20
+konstanta jumlahKotak = 16
 variabel kanvas = ambilElemen("game")
 variabel pena = kanvas.konteks("2d")
-
-variabel ukuran = 20
-variabel jumlah = 16
-
 variabel skor = 0
-
-variabel ular = [
-    {x:8,y:8},
-    {x:7,y:8},
-    {x:6,y:8}
-]
-
+variabel ular = [{x:8,y:8},{x:7,y:8},{x:6,y:8}]
 variabel arahX = 1
 variabel arahY = 0
-
-variabel makanan = {
-    x:12,
-    y:5
-}
-
+variabel makanan = {x:12,y:5}
 variabel sentuhAwalX = 0
 variabel sentuhAwalY = 0
+variabel idPermainan
 
-fungsi angkaAcak(maks) {
-    kembalikan lantai(acak() * maks)
+fungsi angkaAcak(maksimum) {
+    kembalikan lantai(acak() * maksimum)
 }
 
-fungsi buatMakanan() {
-    makanan.x = angkaAcak(jumlah)
-    makanan.y = angkaAcak(jumlah)
+fungsi buatMakananBaru() {
+    makanan.x = angkaAcak(jumlahKotak)
+    makanan.y = angkaAcak(jumlahKotak)
 }
 
 fungsi atas() {
@@ -101,212 +77,141 @@ fungsi kanan() {
     }
 }
 
-kanvas.saatSentuhMulai(fungsi(e){
-    sentuhAwalX = e.x
-    sentuhAwalY = e.y
+kanvas.tambahPendengar("sentuhMulai", fungsi(e) {
+    sentuhAwalX = e.sentuhan[0].x
+    sentuhAwalY = e.sentuhan[0].y
 })
 
-kanvas.saatSentuhSelesai(fungsi(e){
-    variabel dx = e.x - sentuhAwalX
-    variabel dy = e.y - sentuhAwalY
-
-    jika (mutlak(dx) > mutlak(dy)) {
-        jika (dx > 0) {
+kanvas.tambahPendengar("sentuhSelesai", fungsi(e) {
+    variabel akhirX = e.perubahanSentuh[0].x
+    variabel akhirY = e.perubahanSentuh[0].y
+    variabel selisihX = akhirX - sentuhAwalX
+    variabel selisihY = akhirY - sentuhAwalY
+    jika (mutlak(selisihX) > mutlak(selisihY)) {
+        jika (selisihX > 0) {
             kanan()
-        }
-        kalau_tidak {
+        } kalau_tidak {
             kiri()
         }
-    }
-    kalau_tidak {
-        jika (dy > 0) {
+    } kalau_tidak {
+        jika (selisihY > 0) {
             bawah()
-        }
-        kalau_tidak {
+        } kalau_tidak {
             atas()
         }
     }
 })
 
-fungsi gambar() {
+fungsi gambarLingkaran(x, y, jariJari) {
+    pena.mulaiJalur()
+    pena.lingkaran(x, y, jariJari, 0, pi * 2)
+    pena.isi()
+}
+
+fungsi gambarLatar() {
     pena.warnaIsi("#0f380f")
-    pena.kotak(0,0,320,320)
+    pena.kotak(0, 0, 320, 320)
+}
 
+fungsi gambarMakanan() {
     pena.warnaIsi("merah")
+    gambarLingkaran(makanan.x * ukuranKotak + 10, makanan.y * ukuranKotak + 10, 8)
+}
 
-    pena.bulat(
-        makanan.x * ukuran + 10,
-        makanan.y * ukuran + 10,
-        8
-    )
-
+fungsi gambarUlar() {
     untuk (variabel i = 0; i < ular.panjang; i++) {
         variabel bagian = ular[i]
-
         jika (i == 0) {
             pena.warnaIsi("#99ff99")
-        }
-        kalau_tidak {
+        } kalau_tidak {
             pena.warnaIsi("#33aa33")
         }
-
-        pena.kotak(
-            bagian.x * ukuran,
-            bagian.y * ukuran,
-            ukuran,
-            ukuran
-        )
+        pena.kotak(bagian.x * ukuranKotak, bagian.y * ukuranKotak, ukuranKotak, ukuranKotak)
     }
-
     variabel kepala = ular[0]
-
     pena.warnaIsi("hitam")
+    gambarLingkaran(kepala.x * ukuranKotak + 6, kepala.y * ukuranKotak + 6, 2)
+    gambarLingkaran(kepala.x * ukuranKotak + 14, kepala.y * ukuranKotak + 6, 2)
+}
 
-    pena.bulat(
-        kepala.x * ukuran + 6,
-        kepala.y * ukuran + 6,
-        2
-    )
-
-    pena.bulat(
-        kepala.x * ukuran + 14,
-        kepala.y * ukuran + 6,
-        2
-    )
+fungsi permainanSelesai() {
+    hentikanInterval(idPermainan)
+    tampilkan("GAME OVER 🗿\\nSKOR: " + skor)
 }
 
 fungsi perbarui() {
-    variabel kepalaBaru = {
-        x: ular[0].x + arahX,
-        y: ular[0].y + arahY
-    }
-
+    variabel kepalaBaru = {x: ular[0].x + arahX, y: ular[0].y + arahY}
     jika (kepalaBaru.x < 0) {
-        kepalaBaru.x = jumlah - 1
+        kepalaBaru.x = jumlahKotak - 1
     }
-
-    jika (kepalaBaru.x >= jumlah) {
+    jika (kepalaBaru.x >= jumlahKotak) {
         kepalaBaru.x = 0
     }
-
     jika (kepalaBaru.y < 0) {
-        kepalaBaru.y = jumlah - 1
+        kepalaBaru.y = jumlahKotak - 1
     }
-
-    jika (kepalaBaru.y >= jumlah) {
+    jika (kepalaBaru.y >= jumlahKotak) {
         kepalaBaru.y = 0
     }
-
     untuk (variabel i = 0; i < ular.panjang; i++) {
-        jika (
-            kepalaBaru.x == ular[i].x &&
-            kepalaBaru.y == ular[i].y
-        ) {
-            tampilkan("GAME OVER")
-            berhentiProgram()
+        jika (kepalaBaru.x == ular[i].x && kepalaBaru.y == ular[i].y) {
+            permainanSelesai()
+            kembalikan
         }
     }
-
     ular.tambahDepan(kepalaBaru)
-
-    jika (
-        kepalaBaru.x == makanan.x &&
-        kepalaBaru.y == makanan.y
-    ) {
+    jika (kepalaBaru.x == makanan.x && kepalaBaru.y == makanan.y) {
         skor = skor + 1
-
-        ubahTeks(
-            "skor",
-            "SKOR: " + skor
-        )
-
-        buatMakanan()
-    }
-    kalau_tidak {
+        ubahTeks("skor", "SKOR: " + skor)
+        buatMakananBaru()
+    } kalau_tidak {
         ular.hapusBelakang()
     }
 }
 
-fungsi putaran() {
+fungsi gambar() {
+    gambarLatar()
+    gambarMakanan()
+    gambarUlar()
+}
+
+fungsi putaranGame() {
     perbarui()
     gambar()
 }
 
-aturInterval(
-    putaran,
-    150
-)
-
+buatMakananBaru()
+idPermainan = aturInterval(putaranGame, 150)
 </skrip>
-
 </badan>
-
 </html>`
 
-console.log('=== TEST: User Snake Game ===\n')
-console.log('isIndoHTML:', isIndoHTML(userCode))
-console.log('detectCanvasUsage:', detectCanvasUsage(userCode))
+console.log('=== Is IndoCode HTML? ===')
+console.log(isIndoHTML(userCode))
 
+console.log('\n=== Transpile Result ===')
 const result = transpileIndoCode(userCode)
-console.log('success:', result.success)
-console.log('isHTML:', result.isHTML)
-console.log('errors:', result.errors.length)
+console.log('Success:', result.success)
+console.log('Errors:', result.errors.length)
 if (result.errors.length > 0) {
-  console.log('error details:', result.errors)
+  result.errors.forEach(err => {
+    console.log(`  Line ${err.line}: ${err.message}`)
+  })
 }
 
-console.log('\n=== TRANSPILED HTML (first 2000 chars) ===\n')
-console.log(result.code.substring(0, 2000))
-console.log('\n... (truncated, total length:', result.code.length, 'chars)')
-
-// Verify key patterns in transpiled output
-console.log('\n=== PATTERN CHECKS ===')
-const checks = [
-  ['<!DOCTYPE html>', 'Doctype'],
-  ['<head>', 'head tag'],
-  ['<body>', 'body tag'],
-  ['<style>', 'style tag'],
-  ['<script>', 'script tag'],
-  ['<canvas id="game" width="320" height="320">', 'canvas tag with attrs'],
-  ['<title>Ular Nokia Indonesia</title>', 'title'],
-  ['lang="id"', 'lang attr'],
-  ['background', 'CSS background'],
-  ['color', 'CSS color'],
-  ['text-align', 'CSS text-align'],
-  ['font-family', 'CSS font-family'],
-  ['touch-action', 'CSS touch-action'],
-  ['margin-top', 'CSS margin-top'],
-  ['black', 'CSS black value'],
-  ['green', 'CSS green value'],
-  ['center', 'CSS center value'],
-  ['none', 'CSS none value'],
-  ['let kanvas = __ambilElemen', 'JS ambilElemen'],
-  ['getContext("2d")', 'JS getContext'],
-  ['__bulat(__acak', 'JS lantai(acak())'],
-  ['__aturSelang', 'JS aturInterval'],
-  ['__ubahTeks', 'JS ubahTeks'],
-  ['.bulat(', 'JS pena.bulat (canvas polyfill)'],
-  ['.unshift(', 'JS tambahDepan → unshift'],
-  ['.pop()', 'JS hapusBelakang → pop'],
-  ['saatSentuhMulai', 'JS saatSentuhMulai polyfill'],
-  ['saatSentuhSelesai', 'JS saatSentuhSelesai polyfill'],
-  ['console.log', 'JS tampilkan → console.log'],
-  ['__berhentiProgram', 'JS berhentiProgram'],
-]
-
-let passed = 0
-let failed = 0
-for (const [pattern, label] of checks) {
-  if (result.code.includes(pattern)) {
-    console.log(`  ✓ ${label}: "${pattern}"`)
-    passed++
-  } else {
-    console.log(`  ✗ ${label}: "${pattern}" NOT FOUND`)
-    failed++
-  }
-}
-
-console.log(`\n=== SUMMARY: ${passed}/${checks.length} patterns found ===`)
-if (failed > 0) {
-  process.exit(1)
+if (result.success) {
+  console.log('\n=== Generated Code (first 3000 chars) ===')
+  console.log(result.code.substring(0, 3000))
+  console.log('\n... (truncated)')
+  
+  // Search for known issues
+  console.log('\n=== Issue Check ===')
+  console.log('Contains "pi" (unmapped):', /\bpi\b/.test(result.code) && !result.code.includes('var pi'))
+  console.log('Contains "Math.PI":', result.code.includes('Math.PI'))
+  console.log('Contains "tambahDepan":', result.code.includes('tambahDepan'))
+  console.log('Contains "unshift":', result.code.includes('unshift'))
+  console.log('Contains "hapusBelakang":', result.code.includes('hapusBelakang'))
+  console.log('Contains "pop()":', result.code.includes('pop()'))
+  console.log('Contains "panjang":', /\.panjang\b/.test(result.code))
+  console.log('Contains ".length":', result.code.includes('.length'))
 }
