@@ -156,6 +156,22 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
     const file = event.target.files?.[0]
     if (!file) return
 
+    // Size limit: 50MB (prevent mobile browser OOM crash)
+    const MAX_SIZE = 50 * 1024 * 1024
+    if (file.size > MAX_SIZE) {
+      toast.error(`APK terlalu besar (${formatBytes(file.size)}). Maksimal 50MB untuk performa HP.`)
+      event.target.value = ''
+      return
+    }
+
+    // Warning for >20MB
+    if (file.size > 20 * 1024 * 1024) {
+      if (!confirm(`APK ini ${formatBytes(file.size)} — agak besar. Mungkin lambat di HP. Lanjutkan?`)) {
+        event.target.value = ''
+        return
+      }
+    }
+
     setLoading(true)
     try {
       const arrayBuffer = await file.arrayBuffer()

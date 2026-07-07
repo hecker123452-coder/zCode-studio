@@ -19,21 +19,23 @@ const nextConfig: NextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
           { key: 'X-DNS-Prefetch-Control', value: 'on' },
           { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
-          // Cross-Origin policies — prevent resource sharing with other origins
-          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
-          { key: 'Cross-Origin-Resource-Policy', value: 'same-origin' },
+          // Cross-Origin policies — relaxed for Monaco editor compatibility
+          // COEP requires specific headers on all resources; Monaco workers don't support it
+          // { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+          // { key: 'Cross-Origin-Resource-Policy', value: 'same-origin' },
           // Disable embedding in other sites (anti-clickjacking)
           { key: 'Content-Security-Policy', value: [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
             "font-src 'self' data: https://fonts.gstatic.com",
             "img-src 'self' data: blob: https:",
             "connect-src 'self' https:",
             "frame-src 'self'",
-            "object-src 'none'", // block Flash/Java plugins
-            "base-uri 'self'", // prevent base tag injection
-            "form-action 'self'", // prevent form submission to external
+            "worker-src 'self' blob:",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
           ].join('; ') },
         ],
       },

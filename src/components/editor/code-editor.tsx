@@ -95,6 +95,15 @@ export function CodeEditor({
       run: async () => { editor.trigger('', 'actions.find', null); onFind?.() },
     })
     editor.addAction({
+      id: 'zcode-find-replace',
+      label: 'Find & Replace',
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyH],
+      run: async () => {
+        editor.trigger('', 'editor.action.startFindReplaceAction', null)
+        onFind?.()
+      },
+    })
+    editor.addAction({
       id: 'zcode-format',
       label: 'Format Document',
       keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF],

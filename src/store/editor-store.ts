@@ -1278,9 +1278,10 @@ export const useEditorStore = create<EditorState>()(
         openTabs: state.openTabs,
         activeTabId: state.activeTabId,
         settings: state.settings,
-        // Persist source control state too
-        savedSnapshots: state.savedSnapshots,
-        commits: state.commits,
+        // NOTE: savedSnapshots & commits moved to IndexedDB (see src/lib/source-control/storage.ts)
+        // localStorage has 5MB limit — storing full file content per commit would crash.
+        // IndexedDB has 50MB+ limit and handles this properly.
+        stagedFileIds: state.stagedFileIds,
       }),
       merge: (persisted, current) => {
         // Always force theme/uiTheme to the locked defaults; ignore any persisted values.

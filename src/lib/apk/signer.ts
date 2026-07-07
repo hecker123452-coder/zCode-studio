@@ -433,18 +433,51 @@ export async function signApk(
   zip.file('META-INF/CERT.SF', sfContent)
 
   // Step 4: Build CERT.RSA (PKCS#7 SignedData)
-  // Sign the CERT.SF content (the whole file, not just digest)
+  // CRITICAL: Must include authenticatedAttributes (content type, signing time, message digest)
+  // Without these, Android 7+ rejects the signature with "INSTALL_PARSE_FAILED_NO_CERTIFICATES"
   const sfBytes = stringToUint8Array(sfContent)
+  const sfDigest = await sha256(sfBytes)
+
+  // Build authenticatedAttributes
+  // These are: contentType=data, signingTime=now, messageDigest=SHA256(CERT.SF)
+  const OID_CONTENT_TYPE = [1, 2, 840, 113549, 1, 9, 3]
+  const OID_SIGNING_TIME = [1, 2, 840, 113549, 1, 9, 5]
+  const OID_MESSAGE_DIGEST = [1, 2, 840, 113549, 1, 9, 4]
+
+  const authAttrs = derSet(
+    derSequence(
+      derOID(OID_CONTENT_TYPE),
+      derOctetString(derOID(OID_DATA))
+    ),
+    derSequence(
+      derOID(OID_SIGNING_TIME),
+      derOctetString(derUTCTime(new Date()))
+    ),
+    derSequence(
+      derOID(OID_MESSAGE_DIGEST),
+      derOctetString(derOctetString(new Uint8Array(sfDigest)))
+    )
+  )
+
+  // When authenticatedAttributes are present, the signature is computed over
+  // the DER encoding of the authAttrs (with IMPLICIT [0] tag instead of SET tag)
+  // See RFC 5652 Section 5.4
+  const authAttrsForSigning = new Uint8Array(authAttrs.length)
+  authAttrsForSigning.set(authAttrs)
+  // Replace SET tag (0x31) with context [0] IMPLICIT tag (0xA0)
+  authAttrsForSigning[0] = 0xA0
+
   const rsaSignature = await crypto.subtle.sign(
     { name: 'RSASSA-PKCS1-v1_5' },
     privateKey,
-    sfBytes
+    authAttrsForSigning
   )
 
-  // Build PKCS#7 SignedData
+  // Build PKCS#7 SignedData with authenticatedAttributes
   const pkcs7 = buildPkcs7SignedData(
     new Uint8Array(rsaSignature),
-    certificate
+    certificate,
+    authAttrs
   )
   zip.file('META-INF/CERT.RSA', pkcs7)
 
@@ -459,14 +492,21 @@ export async function signApk(
 }
 
 /**
- * Build a PKCS#7 SignedData structure (RFC 5652).
- * This is a minimal structure containing the signature and certificate.
+ * Build a PKCS#7 SignedData structure (RFC 5652) with authenticatedAttributes.
  */
 function buildPkcs7SignedData(
   signature: Uint8Array,
-  certificate: Uint8Array
+  certificate: Uint8Array,
+  authAttrs: Uint8Array
 ): Uint8Array {
-  // SignerInfo
+  // SignerInfo ::= SEQUENCE {
+  //   version INTEGER,
+  //   issuerAndSerialNumber IssuerAndSerialNumber,
+  //   digestAlgorithm AlgorithmIdentifier,
+  //   authenticatedAttributes [0] IMPLICIT Attributes,
+  //   digestEncryptionAlgorithm AlgorithmIdentifier,
+  //   encryptedDigest OCTET STRING
+  // }
   const signerInfo = derSequence(
     derInteger(1), // version
     derSequence(
@@ -474,20 +514,27 @@ function buildPkcs7SignedData(
       derInteger(1)  // serial
     ),
     derSequence(derOID(OID_SHA256), derNull()),
+    derExplicitTag(0, authAttrs), // [0] IMPLICIT authenticatedAttributes
     derSequence(derOID(OID_SHA256_WITH_RSA), derNull()),
     derOctetString(signature)
   )
 
-  // SignedData
+  // SignedData ::= SEQUENCE {
+  //   version INTEGER,
+  //   digestAlgorithms SET OF AlgorithmIdentifier,
+  //   contentInfo ContentInfo,
+  //   certificates [0] IMPLICIT SET OF Certificate OPTIONAL,
+  //   signerInfos SET OF SignerInfo
+  // }
   const signedData = derSequence(
     derInteger(1), // version
     derSet(derSequence(derOID(OID_SHA256), derNull())),
-    derSequence(derOID(OID_DATA)),
-    certificate,
+    derSequence(derOID(OID_DATA)), // contentInfo
+    certificate, // certificates
     derSet(signerInfo)
   )
 
-  // ContentInfo wrapping SignedData
+  // ContentInfo ::= SEQUENCE { contentType OID, content [0] EXPLICIT ANY }
   const contentInfo = derSequence(
     derOID(OID_SIGNED_DATA),
     derExplicitTag(0, signedData)

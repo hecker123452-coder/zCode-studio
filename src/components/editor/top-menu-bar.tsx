@@ -4,7 +4,7 @@ import { useState } from 'react'
 import {
   Code2, Search, FilePlus, FolderPlus, Menu, Eye, Terminal as TerminalIcon, Rocket, Play,
   Upload, Download, Save, FileType2, Keyboard, HelpCircle, ShieldCheck,
-  Files, Bot, Settings, Package,
+  Files, Bot, Settings, Package, FileArchive,
 } from 'lucide-react'
 import {
   Menubar, MenubarContent, MenubarItem, MenubarMenu,
@@ -15,6 +15,7 @@ import { useFileOperations } from '@/hooks/use-file-operations'
 import { promptFileName, promptFolderName } from '@/components/editor/prompt-dialog'
 import { BugScanDialog } from '@/components/editor/bug-scan-dialog'
 import { AboutDialog } from '@/components/editor/about-dialog'
+import { ProjectManagerDialog } from '@/components/editor/project-manager-dialog'
 import { toast } from 'sonner'
 
 export function TopMenuBar() {
@@ -39,6 +40,7 @@ export function TopMenuBar() {
   const openTabs = useEditorStore(s => s.openTabs)
   const [scanOpen, setScanOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [projectManagerOpen, setProjectManagerOpen] = useState(false)
 
   const { openFromDeviceFSAccess, saveToDevice, saveAsToDevice, saveAllToDevice } = useFileOperations()
 
@@ -170,6 +172,10 @@ export function TopMenuBar() {
               <span>Deploy Project</span>
             </MenubarItem>
             <MenubarSeparator />
+            <MenubarItem onClick={() => setProjectManagerOpen(true)}>
+              <FileArchive className="mr-2 h-4 w-4" />
+              <span>Project Manager (ZIP + Cloud)</span>
+            </MenubarItem>
             <MenubarItem onClick={handleExport}>
               <Download className="mr-2 h-4 w-4" />
               <span>Ekspor Project (JSON)</span>
@@ -353,6 +359,7 @@ export function TopMenuBar() {
       {/* Bug Scan Dialog */}
       <BugScanDialog open={scanOpen} onOpenChange={setScanOpen} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
+      <ProjectManagerDialog open={projectManagerOpen} onOpenChange={setProjectManagerOpen} />
     </div>
   )
 }
