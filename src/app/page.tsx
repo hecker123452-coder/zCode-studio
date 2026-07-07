@@ -35,6 +35,7 @@ import { ShortcutsHelpModal } from '@/components/editor/shortcuts-help'
 import { PromptDialog, promptFileName, promptFolderName } from '@/components/editor/prompt-dialog'
 import { AiCodeHelper } from '@/components/editor/ai-code-helper'
 import { AiQuickCode } from '@/components/editor/ai-quick-code'
+import { ApkEditor } from '@/components/editor/apk-editor'
 import { useFileOperations, isBinaryFile, readFileAsText, readFileAsDataURL } from '@/hooks/use-file-operations'
 import { toast } from 'sonner'
 
@@ -61,6 +62,8 @@ export default function Home() {
   const setDeployOpen = useEditorStore(s => s.setDeployOpen)
   const deployOpen = useEditorStore(s => s.deployOpen)
   const setShortcutsHelpOpen = useEditorStore(s => s.setShortcutsHelpOpen)
+  const apkEditorOpen = useEditorStore(s => s.apkEditorOpen)
+  const setApkEditorOpen = useEditorStore(s => s.setApkEditorOpen)
 
   const { saveToDevice, openFromDeviceFSAccess } = useFileOperations()
 
@@ -407,6 +410,7 @@ export default function Home() {
         <PromptDialog />
         <AiCodeHelper />
         <AiQuickCode />
+        <ApkEditor open={apkEditorOpen} onClose={() => setApkEditorOpen(false)} />
       </div>
     )
   }
@@ -505,6 +509,7 @@ export default function Home() {
       <PromptDialog />
       <AiCodeHelper />
       <AiQuickCode />
+      <ApkEditor open={apkEditorOpen} onClose={() => setApkEditorOpen(false)} />
     </div>
   )
 }

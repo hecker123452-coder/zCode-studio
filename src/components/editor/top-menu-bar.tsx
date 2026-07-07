@@ -4,7 +4,7 @@ import { useState } from 'react'
 import {
   Code2, Search, FilePlus, FolderPlus, Menu, Eye, Terminal as TerminalIcon, Rocket, Play,
   Upload, Download, Save, FileType2, Keyboard, HelpCircle, ShieldCheck,
-  Files, Bot, Settings,
+  Files, Bot, Settings, Package,
 } from 'lucide-react'
 import {
   Menubar, MenubarContent, MenubarItem, MenubarMenu,
@@ -34,6 +34,7 @@ export function TopMenuBar() {
   const setDeployOpen = useEditorStore(s => s.setDeployOpen)
   const setRunPanelOpen = useEditorStore(s => s.setRunPanelOpen)
   const setShortcutsHelpOpen = useEditorStore(s => s.setShortcutsHelpOpen)
+  const setApkEditorOpen = useEditorStore(s => s.setApkEditorOpen)
   const activeTabId = useEditorStore(s => s.activeTabId)
   const openTabs = useEditorStore(s => s.openTabs)
   const [scanOpen, setScanOpen] = useState(false)
@@ -216,6 +217,11 @@ export function TopMenuBar() {
               <span>Scan Bug (Semua File)</span>
             </MenubarItem>
             <MenubarSeparator />
+            <MenubarItem onClick={() => setApkEditorOpen(true)}>
+              <Package className="mr-2 h-4 w-4" />
+              <span>APK Editor (MT Style)</span>
+            </MenubarItem>
+            <MenubarSeparator />
             <MenubarItem onClick={handleRun} disabled={!isIndoCode}>
               <Play className="mr-2 h-4 w-4" />
               <span>Jalankan IndoCode</span>
@@ -273,6 +279,13 @@ export function TopMenuBar() {
           <ShieldCheck className="h-5 w-5" />
         </button>
         <button
+          onClick={() => setApkEditorOpen(true)}
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-emerald-400 active:bg-[var(--list-hover)]"
+          title="APK Editor"
+        >
+          <Package className="h-5 w-5" />
+        </button>
+        <button
           onClick={() => setMobileTerminalOpen(true)}
           className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground active:bg-[var(--list-hover)]"
           title="Terminal"
@@ -300,6 +313,15 @@ export function TopMenuBar() {
         >
           <ShieldCheck className="h-3.5 w-3.5" />
           <span>Scan Bug</span>
+        </button>
+
+        <button
+          onClick={() => setApkEditorOpen(true)}
+          className="flex h-7 items-center gap-1.5 rounded-md bg-gradient-to-r from-emerald-500/20 to-blue-500/20 px-3 text-xs font-medium text-emerald-400 transition-all hover:bg-[var(--list-hover)] active:scale-95"
+          title="APK Editor (MT Manager Style)"
+        >
+          <Package className="h-3.5 w-3.5" />
+          <span>APK Editor</span>
         </button>
 
         {isIndoCode && (
