@@ -5,13 +5,14 @@ import JSZip from 'jszip'
 import {
   Package, FileText, Image as ImageIcon, FileCode, File, Folder, FolderOpen,
   ChevronRight, ChevronDown, Download, Upload, X, Save, Loader2, AlertCircle,
-  CheckCircle, Binary, RefreshCw, Search, FileArchive,
+  CheckCircle, Binary, RefreshCw, Search, FileArchive, ShieldCheck, Key,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { signAndDownloadApk, listKeystores, generateKeystore } from '@/lib/apk/signer'
 
 // ===== Types =====
 
@@ -145,6 +146,9 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [hexData, setHexData] = useState<string | null>(null)
+  const [signing, setSigning] = useState(false)
+  const [keystoreAlias, setKeystoreAlias] = useState('zcode-default')
+  const [showSignDialog, setShowSignDialog] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load APK file
@@ -330,6 +334,58 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
     }
   }, [zip, entries, apkName])
 
+  // Build a fresh JSZip from current entries (with modifications applied)
+  const buildCurrentZip = useCallback(async (): Promise<JSZip | null> => {
+    if (!zip) return null
+    const newZip = new JSZip()
+    for (const [path, entry] of entries) {
+      if (entry.isModified && entry.content !== undefined) {
+        newZip.file(path, entry.content)
+      } else if (entry.binaryContent) {
+        newZip.file(path, entry.binaryContent)
+      } else if (entry.content !== undefined) {
+        newZip.file(path, entry.content)
+      }
+    }
+    return newZip
+  }, [zip, entries])
+
+  // Sign APK in-browser using Web Crypto API + download
+  const handleSignAndDownload = useCallback(async () => {
+    setSigning(true)
+    try {
+      const newZip = await buildCurrentZip()
+      if (!newZip) {
+        toast.error('No APK loaded')
+        return
+      }
+
+      toast.info('Signing APK dengan Web Crypto API...', { duration: 3000 })
+
+      const result = await signAndDownloadApk(newZip, keystoreAlias)
+
+      if (!result.success) {
+        throw new Error(result.error || 'Signing failed')
+      }
+
+      // Download signed APK
+      const url = URL.createObjectURL(result.apkBlob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = apkName.replace(/\.apk$/i, '') + '-signed.apk'
+      a.click()
+      URL.revokeObjectURL(url)
+
+      toast.success('APK berhasil di-sign & di-download! Siap install di HP.', { duration: 5000 })
+      setShowSignDialog(false)
+    } catch (err) {
+      console.error('Sign error:', err)
+      toast.error('Gagal sign APK: ' + (err instanceof Error ? err.message : 'Unknown error'))
+    } finally {
+      setSigning(false)
+    }
+  }, [buildCurrentZip, keystoreAlias, apkName])
+
   // Filter tree by search
   const filteredTree = useCallback((node: TreeNode, query: string): TreeNode | null => {
     if (!query) return node
@@ -453,11 +509,23 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
           <Button
             onClick={handleDownload}
             size="sm"
+            variant="outline"
             className="h-8 text-xs"
             disabled={!zip || loading}
+            title="Download tanpa sign (perlu sign ulang manual)"
           >
             <Download className="mr-1.5 h-3.5 w-3.5" />
-            Download Modified
+            Download (Unsigned)
+          </Button>
+          <Button
+            onClick={() => setShowSignDialog(true)}
+            size="sm"
+            className="h-8 bg-gradient-to-r from-emerald-500 to-blue-500 text-xs text-white hover:opacity-90"
+            disabled={!zip || loading || signing}
+            title="Sign APK di browser pakai Web Crypto API + download"
+          >
+            {signing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}
+            Sign & Download
           </Button>
           <Button onClick={onClose} size="sm" variant="ghost" className="h-8 w-8 p-0">
             <X className="h-4 w-4" />
@@ -466,12 +534,95 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
       </div>
 
       {/* Security notice */}
-      <div className="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/5 px-4 py-2 text-[11px] text-amber-400">
-        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+      <div className="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/5 px-4 py-2 text-[11px] text-emerald-400">
+        <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
         <span>
-          <strong>Cara pakai:</strong> Upload APK → edit file → download. Setelah download, APK perlu di-<strong>sign ulang</strong> pakai <code className="rounded bg-amber-500/10 px-1">apksigner</code> atau <code className="rounded bg-amber-500/10 px-1">jarsigner</code> sebelum install di HP. Browser nggak bisa sign APK (butuh Java).
+          <strong>Sign APK langsung di browser!</strong> Pakai Web Crypto API (RSA 2048-bit + SHA-256). Tidak butuh Java/apksigner. Klik <strong>"Sign & Download"</strong> → APK siap install di HP. Keystore disimpan di IndexedDB browser lo.
         </span>
       </div>
+
+      {/* Sign Dialog */}
+      {showSignDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 animate-fade-in" onClick={() => !signing && setShowSignDialog(false)}>
+          <div
+            className="w-full max-w-md rounded-2xl border border-[var(--editor-border)] bg-[var(--side-bar-bg)] p-6 shadow-2xl animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-blue-500">
+                <Key className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">Sign APK</h3>
+                <p className="text-[11px] text-muted-foreground">Web Crypto API · RSA 2048-bit · SHA-256</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="rounded-lg bg-[var(--input-bg)] p-3">
+                <p className="mb-2 font-medium text-foreground">Cara kerja:</p>
+                <ol className="space-y-1 text-muted-foreground">
+                  <li>1. Generate/load RSA 2048-bit keypair (disimpan di IndexedDB)</li>
+                  <li>2. Build MANIFEST.MF (SHA-256 digest tiap file)</li>
+                  <li>3. Build CERT.SF (SHA-256 digest tiap manifest entry)</li>
+                  <li>4. Sign CERT.SF → CERT.RSA (PKCS#7 SignedData)</li>
+                  <li>5. Download APK yang siap install</li>
+                </ol>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                  Keystore Alias
+                </label>
+                <Input
+                  value={keystoreAlias}
+                  onChange={(e) => setKeystoreAlias(e.target.value)}
+                  placeholder="zcode-default"
+                  className="h-8 text-xs"
+                  disabled={signing}
+                />
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Keystore disimpan di browser. Pakai alias yang sama untuk APK lain.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-[10px] text-amber-400">
+                <strong>Catatan:</strong> APK di-sign dengan self-signed certificate. Android akan tampilkan warning "unknown publisher" saat install — klik "Install anyway". Untuk publish ke Play Store, gunakan keystore resmi.
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-2">
+              <Button
+                onClick={() => setShowSignDialog(false)}
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                disabled={signing}
+              >
+                Batal
+              </Button>
+              <Button
+                onClick={handleSignAndDownload}
+                size="sm"
+                className="flex-1 bg-gradient-to-r from-emerald-500 to-blue-500 text-white hover:opacity-90"
+                disabled={signing}
+              >
+                {signing ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Signing...
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                    Sign & Download
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!zip ? (
         // Empty state
