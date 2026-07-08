@@ -1,0 +1,45 @@
+{
+  "name": "ZCode Studio - Code Editor",
+  "short_name": "ZCode",
+  "description": "Web-based code editor with AI assistant, APK editor, and IndoCode support",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a0a",
+  "theme_color": "#1e1e1e",
+  "scope": "/",
+  "lang": "id",
+  "categories": ["productivity", "developer", "utilities"],
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New File",
+      "short_name": "New",
+      "url": "/?action=new-file"
+    },
+    {
+      "name": "APK Editor",
+      "short_name": "APK",
+      "url": "/?action=apk-editor"
+    },
+    {
+      "name": "AI Assistant",
+      "short_name": "AI",
+      "url": "/?action=ai"
+    }
+  ],
+  "display_override": ["standalone", "fullscreen", "minimal-ui"]
+}

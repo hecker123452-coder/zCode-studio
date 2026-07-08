@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { SecurityGuard } from "@/components/security/security-guard";
+import { ServiceWorkerRegister } from "@/components/pwa/sw-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -21,6 +22,13 @@ export const metadata: Metadata = {
   authors: [{ name: "ZCode Studio" }],
   icons: {
     icon: "/logo.svg",
+    apple: "/logo.svg",
+  },
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "ZCode Studio",
   },
 };
 
@@ -48,6 +56,7 @@ export default function RootLayout({
         style={{ overscrollBehavior: 'none', touchAction: 'manipulation' }}
       >
         <SecurityGuard />
+        <ServiceWorkerRegister />
         {children}
         <Toaster richColors position="bottom-right" />
       </body>

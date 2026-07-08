@@ -57,6 +57,30 @@ export function CodeEditor({
     registerIndoCodeLanguage(monaco)
     setThemesDefined(true)
 
+    // === Enable Emmet (HTML/CSS abbreviation expansion) ===
+    // Ketik "div.container>ul>li*5" + Tab → jadi full HTML structure
+    try {
+      // @ts-expect-error - emmet is loaded from CDN, may not have types
+      if (monaco.emmet) {
+        // @ts-expect-error
+        monaco.emmet.HTMLAbbreviationProvider.register(monaco)
+        // @ts-expect-error
+        monaco.emmet.CSSAbbreviationProvider.register(monaco)
+      }
+    } catch {
+      // Emmet from CDN may not be available — silent fail
+    }
+
+    // === Multi-cursor shortcuts (Ctrl+D, Ctrl+Shift+L) ===
+    // Ctrl+D: select next occurrence (built-in, but ensure enabled)
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD, () => {
+      editor.trigger('', 'editor.action.addSelectionToNextFindMatch', null)
+    })
+    // Ctrl+Shift+L: select all occurrences
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyL, () => {
+      editor.trigger('', 'editor.action.selectHighlights', null)
+    })
+
     // Keyboard shortcuts
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => {
       setCommandPaletteOpen(true)

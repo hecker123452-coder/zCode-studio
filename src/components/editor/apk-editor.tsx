@@ -5,7 +5,7 @@ import JSZip from 'jszip'
 import {
   Package, FileText, Image as ImageIcon, FileCode, File, Folder, FolderOpen,
   ChevronRight, ChevronDown, Download, Upload, X, Save, Loader2, AlertCircle,
-  CheckCircle, Binary, RefreshCw, Search, FileArchive, ShieldCheck, Key,
+  CheckCircle, Binary, RefreshCw, Search, FileArchive, ShieldCheck, Key, Info,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,6 +13,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { signAndDownloadApk, listKeystores, generateKeystore } from '@/lib/apk/signer'
+import { decodeAXML, parseManifestInfo, parseDexInfo, type ApkManifestInfo, type DexInfo } from '@/lib/apk/axml'
 
 // ===== Types =====
 
@@ -149,6 +150,9 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
   const [signing, setSigning] = useState(false)
   const [keystoreAlias, setKeystoreAlias] = useState('zcode-default')
   const [showSignDialog, setShowSignDialog] = useState(false)
+  const [manifestInfo, setManifestInfo] = useState<ApkManifestInfo | null>(null)
+  const [showApkInfo, setShowApkInfo] = useState(false)
+  const [dexInfo, setDexInfo] = useState<DexInfo | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load APK file
@@ -221,6 +225,31 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
       setImagePreview(null)
       setHexData(null)
       setHasUnsavedChanges(false)
+      setManifestInfo(null)
+      setDexInfo(null)
+
+      // Parse AndroidManifest.xml (AXML) and extract APK info
+      const manifestEntry = newEntries.get('AndroidManifest.xml')
+      if (manifestEntry?.binaryContent) {
+        try {
+          const decodedXml = decodeAXML(manifestEntry.binaryContent)
+          manifestEntry.content = decodedXml
+          manifestEntry.binaryContent = undefined // now it's text
+          newEntries.set('AndroidManifest.xml', manifestEntry)
+          const info = parseManifestInfo(decodedXml)
+          setManifestInfo(info)
+        } catch (err) {
+          console.warn('Failed to decode AXML:', err)
+        }
+      }
+
+      // Parse classes.dex for info
+      const dexEntry = newEntries.get('classes.dex')
+      if (dexEntry?.binaryContent) {
+        try {
+          setDexInfo(parseDexInfo(dexEntry.binaryContent))
+        } catch {}
+      }
 
       toast.success(`APK loaded: ${file.name} (${newEntries.size} files)`)
     } catch (err) {
@@ -522,6 +551,18 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
             {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
             Upload APK
           </Button>
+          {manifestInfo && (
+            <Button
+              onClick={() => setShowApkInfo(true)}
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs text-blue-400"
+              title="APK Info"
+            >
+              <Info className="mr-1.5 h-3.5 w-3.5" />
+              APK Info
+            </Button>
+          )}
           <Button
             onClick={handleDownload}
             size="sm"
@@ -556,6 +597,106 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
           <strong>Sign APK langsung di browser!</strong> Pakai Web Crypto API (RSA 2048-bit + SHA-256). Tidak butuh Java/apksigner. Klik <strong>"Sign & Download"</strong> → APK siap install di HP. Keystore disimpan di IndexedDB browser lo.
         </span>
       </div>
+
+      {/* APK Info Dialog */}
+      {showApkInfo && manifestInfo && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 animate-fade-in" onClick={() => setShowApkInfo(false)}>
+          <div
+            className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-[var(--editor-border)] bg-[var(--side-bar-bg)] p-6 shadow-2xl animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Info className="h-5 w-5 text-blue-400" />
+                APK Info
+              </h3>
+              <button onClick={() => setShowApkInfo(false)} className="rounded p-1 hover:bg-[var(--list-hover)]">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              {/* Basic info */}
+              <div className="rounded-lg bg-[var(--input-bg)] p-3">
+                <h4 className="mb-2 font-medium text-foreground">App Info</h4>
+                <div className="space-y-1 text-muted-foreground">
+                  <div><span className="text-foreground">Package:</span> {manifestInfo.package || '—'}</div>
+                  <div><span className="text-foreground">Version:</span> {manifestInfo.versionName || '—'} ({manifestInfo.versionCode || '—'})</div>
+                  <div><span className="text-foreground">Min SDK:</span> {manifestInfo.minSdk || '—'}</div>
+                  <div><span className="text-foreground">Target SDK:</span> {manifestInfo.targetSdk || '—'}</div>
+                </div>
+              </div>
+
+              {/* DEX info */}
+              {dexInfo && (
+                <div className="rounded-lg bg-[var(--input-bg)] p-3">
+                  <h4 className="mb-2 font-medium text-foreground">DEX Info</h4>
+                  <div className="space-y-1 text-muted-foreground">
+                    <div><span className="text-foreground">Version:</span> {dexInfo.version}</div>
+                    <div><span className="text-foreground">Classes:</span> {dexInfo.classCount.toLocaleString()}</div>
+                    <div><span className="text-foreground">Methods:</span> {dexInfo.methodCount.toLocaleString()}</div>
+                    <div><span className="text-foreground">Fields:</span> {dexInfo.fieldCount.toLocaleString()}</div>
+                    <div><span className="text-foreground">Strings:</span> {dexInfo.stringCount.toLocaleString()}</div>
+                    <div><span className="text-foreground">File size:</span> {formatBytes(dexInfo.fileSize)}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Permissions */}
+              {manifestInfo.permissions.length > 0 && (
+                <div className="rounded-lg bg-[var(--input-bg)] p-3">
+                  <h4 className="mb-2 font-medium text-foreground">
+                    Permissions ({manifestInfo.permissions.length})
+                  </h4>
+                  <div className="max-h-32 overflow-y-auto space-y-1 text-muted-foreground">
+                    {manifestInfo.permissions.map((p, i) => (
+                      <div key={i} className="font-mono text-[11px]">
+                        {p.replace('android.permission.', '')}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Activities */}
+              {manifestInfo.activities.length > 0 && (
+                <div className="rounded-lg bg-[var(--input-bg)] p-3">
+                  <h4 className="mb-2 font-medium text-foreground">
+                    Activities ({manifestInfo.activities.length})
+                  </h4>
+                  <div className="max-h-32 overflow-y-auto space-y-1 text-muted-foreground">
+                    {manifestInfo.activities.map((a, i) => (
+                      <div key={i} className="font-mono text-[11px]">{a}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Services */}
+              {manifestInfo.services.length > 0 && (
+                <div className="rounded-lg bg-[var(--input-bg)] p-3">
+                  <h4 className="mb-2 font-medium text-foreground">
+                    Services ({manifestInfo.services.length})
+                  </h4>
+                  <div className="max-h-32 overflow-y-auto space-y-1 text-muted-foreground">
+                    {manifestInfo.services.map((s, i) => (
+                      <div key={i} className="font-mono text-[11px]">{s}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <Button
+              onClick={() => setShowApkInfo(false)}
+              className="mt-5 w-full"
+              size="sm"
+            >
+              Close
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Sign Dialog */}
       {showSignDialog && (
