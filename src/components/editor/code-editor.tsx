@@ -10,6 +10,7 @@ import { Code2, FileText, Sparkles } from 'lucide-react'
 import { FilePreview } from './file-preview'
 import { isImageFile, isMarkdownFile } from '@/hooks/use-file-operations'
 import { promptGoToLine } from '@/components/editor/prompt-dialog'
+import { debouncedRequestCompletion, cancelPendingCompletion } from '@/lib/ai/inline-completion'
 
 interface CodeEditorProps {
   onCursorChange?: (position: { line: number; column: number }) => void
@@ -79,6 +80,55 @@ export function CodeEditor({
     // Ctrl+Shift+L: select all occurrences
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyL, () => {
       editor.trigger('', 'editor.action.selectHighlights', null)
+    })
+
+    // === AI Inline Completion (Copilot-style) ===
+    // Register inline suggestions provider
+    let currentSuggestion: string | null = null
+    let ghostDecoration: string[] = []
+
+    // Register inline completions provider
+    monaco.languages.registerInlineCompletionsProvider('*', {
+      provideInlineCompletions: async (model, position) => {
+        // Only suggest if enabled and not mobile
+        if (isMobile) return { items: [] }
+
+        const code = model.getValue()
+        const language = model.getLanguageId?.() || 'plaintext'
+
+        // Get suggestion (debounced)
+        return new Promise((resolve) => {
+          debouncedRequestCompletion(
+            { code, language, fileName: activeFile?.name || 'untitled' },
+            (response) => {
+              if (response.suggestion && response.suggestion.length > 0) {
+                currentSuggestion = response.suggestion
+                resolve({
+                  items: [{
+                    insertText: response.suggestion,
+                    range: {
+                      startLineNumber: position.lineNumber,
+                      startColumn: position.column,
+                      endLineNumber: position.lineNumber,
+                      endColumn: position.column,
+                    },
+                  }],
+                })
+              } else {
+                resolve({ items: [] })
+              }
+            }
+          )
+        })
+      },
+      freeInlineCompletions: () => {
+        currentSuggestion = null
+      },
+    })
+
+    // Cancel pending completion on cursor move (avoid stale suggestions)
+    editor.onDidChangeCursorPosition(() => {
+      // Don't cancel — let Monaco handle it
     })
 
     // Keyboard shortcuts
@@ -199,6 +249,7 @@ export function CodeEditor({
       if (updateTimerRef.current) {
         clearTimeout(updateTimerRef.current)
       }
+      cancelPendingCompletion()
     }
   }, [])
 

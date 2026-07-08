@@ -1140,7 +1140,6 @@ export const useEditorStore = create<EditorState>()(
         const id = `commit-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
         const allFiles = Object.values(state.files).filter(f => f.type === 'file')
 
-        // Snapshot ALL files at commit time — this becomes the restore point
         const fileSnapshots = allFiles.map(f => ({
           fileId: f.id,
           name: f.name,
@@ -1161,10 +1160,24 @@ export const useEditorStore = create<EditorState>()(
         }
 
         set({
-          commits: [commit, ...state.commits].slice(0, 50), // keep last 50 commits
+          commits: [commit, ...state.commits].slice(0, 50),
           savedSnapshots: newSnapshots,
-          stagedFileIds: [], // clear staging area after commit
+          stagedFileIds: [],
         })
+
+        // Persist to IndexedDB (async, non-blocking)
+        if (typeof window !== 'undefined') {
+          import('@/lib/source-control/storage').then(async ({ saveCommit, saveSnapshot }) => {
+            try {
+              await saveCommit(commit)
+              for (const [fileId, content] of Object.entries(newSnapshots)) {
+                await saveSnapshot(fileId, content)
+              }
+            } catch (err) {
+              console.warn('[store] Failed to persist commit to IndexedDB:', err)
+            }
+          })
+        }
 
         return id
       },
@@ -1292,6 +1305,22 @@ export const useEditorStore = create<EditorState>()(
           theme: 'vs-dark',
           uiTheme: 'dark',
         } as EditorState
+      },
+      onRehydrateStorage: () => (state) => {
+        // After localStorage hydration, load commits + snapshots from IndexedDB
+        if (state && typeof window !== 'undefined') {
+          import('@/lib/source-control/storage').then(async ({ loadCommits, loadSnapshots }) => {
+            try {
+              const [commits, snapshots] = await Promise.all([loadCommits(), loadSnapshots()])
+              useEditorStore.setState({
+                commits,
+                savedSnapshots: snapshots,
+              })
+            } catch (err) {
+              console.warn('[store] Failed to load source control from IndexedDB:', err)
+            }
+          })
+        }
       },
     }
   )

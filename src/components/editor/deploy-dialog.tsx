@@ -30,6 +30,7 @@ interface DeployDialogProps {
 export function DeployDialog({ open, onOpenChange }: DeployDialogProps) {
   const [deploying, setDeploying] = useState(false)
   const [deployedUrl, setDeployedUrl] = useState<string | null>(null)
+  const [deployTitle, setDeployTitle] = useState('')
   const [deployedId, setDeployedId] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [projects, setProjects] = useState<DeployedProject[]>([])
@@ -111,7 +112,7 @@ export function DeployDialog({ open, onOpenChange }: DeployDialogProps) {
         body: JSON.stringify({
           html: deployContent,
           fileName: activeFile.name,
-          title: activeFile.name.replace(/\.[^.]+$/, ''),
+          title: deployTitle || activeFile.name.replace(/\.[^.]+$/, ''),
         }),
       })
 
@@ -223,24 +224,39 @@ export function DeployDialog({ open, onOpenChange }: DeployDialogProps) {
                 </div>
 
                 {!deployedUrl ? (
-                  <Button
-                    onClick={handleDeploy}
-                    disabled={deploying}
-                    className="w-full h-11 text-sm font-semibold"
-                    size="lg"
-                  >
-                    {deploying ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Lagi Deploy...
-                      </>
-                    ) : (
-                      <>
-                        <Rocket className="mr-2 h-4 w-4" />
-                        Deploy Sekarang
-                      </>
-                    )}
-                  </Button>
+                  <>
+                    <div className="mb-3">
+                      <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Project Title (opsional)
+                      </label>
+                      <input
+                        type="text"
+                        value={deployTitle}
+                        onChange={(e) => setDeployTitle(e.target.value)}
+                        placeholder={activeFile?.name.replace(/\.[^.]+$/, '') || 'My Project'}
+                        className="w-full rounded-md border border-[var(--editor-border)] bg-[var(--input-bg)] px-3 py-2 text-xs"
+                        maxLength={100}
+                      />
+                    </div>
+                    <Button
+                      onClick={handleDeploy}
+                      disabled={deploying}
+                      className="w-full h-11 text-sm font-semibold"
+                      size="lg"
+                    >
+                      {deploying ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Lagi Deploy...
+                        </>
+                      ) : (
+                        <>
+                          <Rocket className="mr-2 h-4 w-4" />
+                          Deploy Sekarang
+                        </>
+                      )}
+                    </Button>
+                  </>
                 ) : (
                   <div className="space-y-3">
                     {/* Success state */}
