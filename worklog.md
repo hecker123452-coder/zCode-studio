@@ -922,3 +922,56 @@ Stage Summary:
 - ✅ All features upgraded
 - ✅ 0 errors (lint + console)
 - ✅ Comprehensive E2E verification passed
+
+---
+Task ID: 15
+Agent: main-agent (Super Z)
+Task: Fix mobile layout — X close button missing + messy layout on HP.
+
+Root Cause:
+- APK Editor header used single-row layout: all buttons (Upload, Download, Sign, X) in one horizontal flex
+- On mobile (375px width), buttons overflowed → X close button pushed off screen
+- Security notice banner text too long for mobile
+- Empty state cards not stacking properly on mobile
+
+Fix Applied (apk-editor.tsx):
+
+1. Header redesigned — 2-row responsive layout:
+   - Row 1 (always visible): Logo + Title + **X close button** (h-9 w-9, shrink-0)
+   - Row 2 (scrollable): Upload, Info, Download, Sign buttons (horizontal scroll on mobile)
+   - Button text shortened on mobile: "Upload APK" → "Upload", "Download (Unsigned)" → "Download", "Sign & Download" → "Sign"
+   - Badge simplified: "MT-STYLE" → "MT"
+
+2. Security notice compacted:
+   - Text shortened: "Sign langsung di browser! Web Crypto API (RSA 2048 + SHA-256). No Java needed."
+   - Smaller padding/font on mobile (px-3 py-1.5 text-[10px] vs px-4 py-2 text-[11px])
+
+3. Empty state mobile-optimized:
+   - Icon: 16x16 on mobile (was 20x20)
+   - Title: "APK Editor" (was "APK Editor — MT Manager Style")
+   - Description: shorter text
+   - Feature cards: 1 column on mobile (was 3 columns), shorter titles
+   - Upload button: full-width max-w-xs on mobile
+
+4. Editor layout responsive:
+   - Mobile: vertical split (file tree bottom half, editor top half)
+   - Desktop: horizontal split (file tree left, editor right)
+   - File tree: h-1/2 on mobile, w-72 on desktop
+
+VERIFICATION:
+- bun run lint: 0 errors, 0 warnings
+- agent-browser mobile viewport (375x812 iPhone X):
+  * X close button visible: "Close APK Editor" ref=e21 ✅
+  * Header: "APK Editor MT" + X button on row 1 ✅
+  * Buttons: "Upload", "Download", "Sign" on row 2 (scrollable) ✅
+  * No overflow, no cut-off elements ✅
+- Screenshot saved: zcode-apk-mobile-fixed.png
+
+Stage Summary:
+- ✅ X close button now ALWAYS visible on mobile
+- ✅ Header layout clean (2-row responsive)
+- ✅ Button text shortened on mobile
+- ✅ Security notice compact
+- ✅ Empty state mobile-optimized
+- ✅ Editor layout: vertical on mobile, horizontal on desktop
+- ✅ Lint clean, verified in mobile viewport

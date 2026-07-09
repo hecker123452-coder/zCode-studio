@@ -515,25 +515,38 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-[var(--editor-bg)] animate-fade-in">
-      {/* Header */}
-      <div className="flex h-14 items-center justify-between border-b border-[var(--editor-border)] bg-[var(--title-bar-bg)] px-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-blue-500">
-            <Package className="h-4 w-4 text-white" />
+      {/* Header — responsive: stacks on mobile, row on desktop */}
+      <div className="flex flex-col gap-2 border-b border-[var(--editor-border)] bg-[var(--title-bar-bg)] px-3 py-3 sm:px-4">
+        {/* Top row: logo + title + X close */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-blue-500">
+              <Package className="h-4 w-4 text-white" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+                <span className="truncate">APK Editor</span>
+                <span className="shrink-0 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">
+                  MT
+                </span>
+              </h2>
+              <p className="truncate text-[10px] text-muted-foreground">
+                {apkName ? `${apkName} · ${totalFiles} files · ${modifiedFiles} mod` : 'No APK loaded'}
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="flex items-center gap-2 text-sm font-semibold">
-              APK Editor
-              <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">
-                MT-STYLE
-              </span>
-            </h2>
-            <p className="text-[10px] text-muted-foreground">
-              {apkName ? `${apkName} · ${totalFiles} files · ${modifiedFiles} modified` : 'No APK loaded'}
-            </p>
-          </div>
+          {/* X close button — ALWAYS visible */}
+          <button
+            onClick={onClose}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-[var(--list-hover)] hover:text-foreground transition-colors active:scale-95"
+            aria-label="Close APK Editor"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
-        <div className="flex items-center gap-2">
+
+        {/* Action buttons — scrollable row on mobile, row on desktop */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -545,56 +558,57 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
             onClick={() => fileInputRef.current?.click()}
             size="sm"
             variant="outline"
-            className="h-8 text-xs"
+            className="h-8 shrink-0 text-xs"
             disabled={loading}
           >
-            {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
-            Upload APK
+            {loading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1 h-3.5 w-3.5" />}
+            <span className="hidden sm:inline">Upload APK</span>
+            <span className="sm:hidden">Upload</span>
           </Button>
           {manifestInfo && (
             <Button
               onClick={() => setShowApkInfo(true)}
               size="sm"
               variant="outline"
-              className="h-8 text-xs text-blue-400"
+              className="h-8 shrink-0 text-xs text-blue-400"
               title="APK Info"
             >
-              <Info className="mr-1.5 h-3.5 w-3.5" />
-              APK Info
+              <Info className="mr-1 h-3.5 w-3.5" />
+              <span className="hidden sm:inline">APK Info</span>
+              <span className="sm:hidden">Info</span>
             </Button>
           )}
           <Button
             onClick={handleDownload}
             size="sm"
             variant="outline"
-            className="h-8 text-xs"
+            className="h-8 shrink-0 text-xs"
             disabled={!zip || loading}
-            title="Download tanpa sign (perlu sign ulang manual)"
+            title="Download tanpa sign"
           >
-            <Download className="mr-1.5 h-3.5 w-3.5" />
-            Download (Unsigned)
+            <Download className="mr-1 h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Download (Unsigned)</span>
+            <span className="sm:hidden">Download</span>
           </Button>
           <Button
             onClick={() => setShowSignDialog(true)}
             size="sm"
-            className="h-8 bg-gradient-to-r from-emerald-500 to-blue-500 text-xs text-white hover:opacity-90"
+            className="h-8 shrink-0 bg-gradient-to-r from-emerald-500 to-blue-500 text-xs text-white hover:opacity-90"
             disabled={!zip || loading || signing}
-            title="Sign APK di browser pakai Web Crypto API + download"
+            title="Sign APK di browser"
           >
-            {signing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}
-            Sign & Download
-          </Button>
-          <Button onClick={onClose} size="sm" variant="ghost" className="h-8 w-8 p-0">
-            <X className="h-4 w-4" />
+            {signing ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1 h-3.5 w-3.5" />}
+            <span className="hidden sm:inline">Sign & Download</span>
+            <span className="sm:hidden">Sign</span>
           </Button>
         </div>
       </div>
 
-      {/* Security notice */}
-      <div className="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/5 px-4 py-2 text-[11px] text-emerald-400">
-        <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-        <span>
-          <strong>Sign APK langsung di browser!</strong> Pakai Web Crypto API (RSA 2048-bit + SHA-256). Tidak butuh Java/apksigner. Klik <strong>"Sign & Download"</strong> → APK siap install di HP. Keystore disimpan di IndexedDB browser lo.
+      {/* Security notice — compact on mobile */}
+      <div className="flex items-start gap-2 border-b border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5 text-[10px] text-emerald-400 sm:px-4 sm:py-2 sm:text-[11px]">
+        <ShieldCheck className="mt-0.5 h-3 w-3 shrink-0 sm:h-3.5 sm:w-3.5" />
+        <span className="leading-relaxed">
+          <strong>Sign langsung di browser!</strong> Web Crypto API (RSA 2048 + SHA-256). No Java needed.
         </span>
       </div>
 
@@ -782,24 +796,23 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
       )}
 
       {!zip ? (
-        // Empty state
-        <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
-          <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-[var(--list-hover)] animate-pulse-glow">
-            <FileArchive className="h-10 w-10 text-muted-foreground" />
+        // Empty state — mobile-optimized
+        <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto p-4 text-center sm:p-8">
+          <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--list-hover)] animate-pulse-glow sm:h-20 sm:w-20">
+            <FileArchive className="h-8 w-8 text-muted-foreground sm:h-10 sm:w-10" />
           </div>
-          <h3 className="mb-2 text-lg font-semibold">APK Editor — MT Manager Style</h3>
-          <p className="mb-6 max-w-md text-sm text-muted-foreground">
-            Upload file APK (.apk) untuk mulai edit. Lo bisa edit file text (XML, smali, json, assets),
-            view gambar (icon, drawable), dan liat hex untuk binary (DEX, ARSC).
+          <h3 className="mb-1 text-base font-semibold sm:text-lg">APK Editor</h3>
+          <p className="mb-4 max-w-xs text-xs text-muted-foreground sm:mb-6 sm:max-w-md sm:text-sm">
+            Upload file APK untuk mulai edit. Edit text, view gambar, liat hex binary.
           </p>
-          <div className="grid max-w-2xl gap-3 sm:grid-cols-3">
-            <FeatureCard icon={FileText} title="Edit Text Files" desc="XML, smali, json, assets" />
-            <FeatureCard icon={ImageIcon} title="View Images" desc="PNG, JPG, icon, drawable" />
-            <FeatureCard icon={Binary} title="Hex Viewer" desc="DEX, ARSC, binary files" />
+          <div className="mb-4 grid w-full max-w-md grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
+            <FeatureCard icon={FileText} title="Edit Text" desc="XML, smali, json" />
+            <FeatureCard icon={ImageIcon} title="View Images" desc="PNG, JPG, icon" />
+            <FeatureCard icon={Binary} title="Hex Viewer" desc="DEX, ARSC binary" />
           </div>
           <Button
             onClick={() => fileInputRef.current?.click()}
-            className="mt-6 h-11 px-8"
+            className="h-11 w-full max-w-xs px-6 sm:w-auto sm:px-8"
             size="lg"
           >
             <Upload className="mr-2 h-4 w-4" />
@@ -807,10 +820,10 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
           </Button>
         </div>
       ) : (
-        // Editor layout
-        <div className="flex flex-1 overflow-hidden">
-          {/* File tree sidebar */}
-          <div className="flex w-72 flex-col border-r border-[var(--editor-border)] bg-[var(--side-bar-bg)]">
+        // Editor layout — responsive: vertical on mobile, horizontal on desktop
+        <div className="flex flex-1 flex-col overflow-hidden sm:flex-row">
+          {/* File tree sidebar — bottom half on mobile, left on desktop */}
+          <div className="flex h-1/2 flex-col border-b border-[var(--editor-border)] bg-[var(--side-bar-bg)] sm:h-full sm:w-72 sm:border-b-0 sm:border-r">
             <div className="flex items-center gap-2 border-b border-[var(--editor-border)] px-3 py-2">
               <Search className="h-3.5 w-3.5 text-muted-foreground" />
               <Input
@@ -834,8 +847,8 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
             </div>
           </div>
 
-          {/* Editor area */}
-          <div className="flex flex-1 flex-col">
+          {/* Editor area — top half on mobile, right on desktop */}
+          <div className="flex h-1/2 flex-1 flex-col sm:h-full">
             {selectedPath ? (
               <>
                 {/* File header */}
