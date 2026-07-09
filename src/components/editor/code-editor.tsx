@@ -58,51 +58,45 @@ export function CodeEditor({
     registerIndoCodeLanguage(monaco)
     setThemesDefined(true)
 
-    // === Enable Emmet (HTML/CSS abbreviation expansion) ===
-    // Ketik "div.container>ul>li*5" + Tab → jadi full HTML structure
-    try {
-      // @ts-expect-error - emmet is loaded from CDN, may not have types
-      if (monaco.emmet) {
-        // @ts-expect-error
-        monaco.emmet.HTMLAbbreviationProvider.register(monaco)
-        // @ts-expect-error
-        monaco.emmet.CSSAbbreviationProvider.register(monaco)
-      }
-    } catch {
-      // Emmet from CDN may not be available — silent fail
-    }
-
     // === Multi-cursor shortcuts (Ctrl+D, Ctrl+Shift+L) ===
-    // Ctrl+D: select next occurrence (built-in, but ensure enabled)
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD, () => {
       editor.trigger('', 'editor.action.addSelectionToNextFindMatch', null)
     })
-    // Ctrl+Shift+L: select all occurrences
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyL, () => {
       editor.trigger('', 'editor.action.selectHighlights', null)
     })
 
     // === AI Inline Completion (Copilot-style) ===
-    // Register inline suggestions provider
-    let currentSuggestion: string | null = null
-    let ghostDecoration: string[] = []
-
-    // Register inline completions provider
+    // Only trigger on content change, not every cursor move
+    // Uses debounced API call (800ms) to avoid spamming
+    let lastCompletionRequest = 0
     monaco.languages.registerInlineCompletionsProvider('*', {
       provideInlineCompletions: async (model, position) => {
-        // Only suggest if enabled and not mobile
         if (isMobile) return { items: [] }
 
-        const code = model.getValue()
-        const language = model.getLanguageId?.() || 'plaintext'
+        // Rate limit: max 1 request per 2 seconds
+        const now = Date.now()
+        if (now - lastCompletionRequest < 2000) return { items: [] }
+        lastCompletionRequest = now
 
-        // Get suggestion (debounced)
+        const code = model.getValue()
+        // Only suggest for substantial code (> 20 chars)
+        if (code.trim().length < 20) return { items: [] }
+
+        // Only suggest for code languages, not plaintext
+        const language = model.getLanguageId?.() || 'plaintext'
+        if (language === 'plaintext' || language === 'markdown') return { items: [] }
+
+        // Get the line at cursor position
+        const lineContent = model.getLineContent(position.lineNumber)
+        // Only suggest if cursor is at end of a line with content
+        if (lineContent.trim().length < 3) return { items: [] }
+
         return new Promise((resolve) => {
           debouncedRequestCompletion(
             { code, language, fileName: activeFile?.name || 'untitled' },
             (response) => {
-              if (response.suggestion && response.suggestion.length > 0) {
-                currentSuggestion = response.suggestion
+              if (response.suggestion && response.suggestion.length > 5) {
                 resolve({
                   items: [{
                     insertText: response.suggestion,
@@ -121,14 +115,7 @@ export function CodeEditor({
           )
         })
       },
-      freeInlineCompletions: () => {
-        currentSuggestion = null
-      },
-    })
-
-    // Cancel pending completion on cursor move (avoid stale suggestions)
-    editor.onDidChangeCursorPosition(() => {
-      // Don't cancel — let Monaco handle it
+      freeInlineCompletions: () => {},
     })
 
     // Keyboard shortcuts

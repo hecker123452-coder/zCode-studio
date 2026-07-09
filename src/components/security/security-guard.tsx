@@ -144,10 +144,11 @@ export function SecurityGuard() {
     }
     const devtoolsInterval = setInterval(checkDevtools, 2000)
 
-    // === 6. Block large clipboard copy (anti-scraping, allows normal copy) ===
+    // === 6. Block large clipboard copy (anti-scraping, allows normal code copy) ===
     const blockLargeCopy = (e: ClipboardEvent) => {
       const selection = window.getSelection()?.toString() || ''
-      if (selection.length > 5000) {
+      // Block only very large copies (>50KB) — allows copying full code files
+      if (selection.length > 50000) {
         e.preventDefault()
         showWarningToast('Copy text terlalu besar diblokir untuk protect konten')
         return false

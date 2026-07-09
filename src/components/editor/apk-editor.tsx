@@ -248,7 +248,7 @@ export function ApkEditor({ open, onClose }: ApkEditorProps) {
       if (dexEntry?.binaryContent) {
         try {
           setDexInfo(parseDexInfo(dexEntry.binaryContent))
-        } catch {}
+        } catch { /* ignore */ }
       }
 
       toast.success(`APK loaded: ${file.name} (${newEntries.size} files)`)

@@ -159,7 +159,7 @@ export function decodeAXML(data: Uint8Array): string {
     try {
       const text = new TextDecoder().decode(data)
       if (text.startsWith('<?xml') || text.startsWith('<')) return text
-    } catch {}
+    } catch { /* ignore */ }
     return '<!-- Not a valid AXML file -->'
   }
 
@@ -440,7 +440,7 @@ export function parseDexInfo(data: Uint8Array): DexInfo {
       if (str.length > 3) strings.push(str)
     }
     info.topStrings = strings.filter(s => !s.includes('????'))
-  } catch {}
+  } catch { /* ignore */ }
 
   return info
 }
