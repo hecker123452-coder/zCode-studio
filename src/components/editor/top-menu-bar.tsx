@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
   Code2, Search, FilePlus, FolderPlus, Menu, Eye, Terminal as TerminalIcon, Rocket, Play,
   Upload, Download, Save, FileType2, Keyboard, HelpCircle, ShieldCheck,
@@ -16,6 +16,7 @@ import { promptFileName, promptFolderName } from '@/components/editor/prompt-dia
 import { BugScanDialog } from '@/components/editor/bug-scan-dialog'
 import { AboutDialog } from '@/components/editor/about-dialog'
 import { ProjectManagerDialog } from '@/components/editor/project-manager-dialog'
+import { SecretMenu } from '@/components/editor/secret-menu'
 import { toast } from 'sonner'
 
 export function TopMenuBar() {
@@ -41,6 +42,24 @@ export function TopMenuBar() {
   const [scanOpen, setScanOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const [projectManagerOpen, setProjectManagerOpen] = useState(false)
+  const [secretMenuOpen, setSecretMenuOpen] = useState(false)
+  const logoClickCount = useRef(0)
+  const logoClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Triple-click logo → open secret menu
+  const handleLogoClick = () => {
+    logoClickCount.current++
+    if (logoClickTimer.current) clearTimeout(logoClickTimer.current)
+    logoClickTimer.current = setTimeout(() => {
+      logoClickCount.current = 0
+    }, 600)
+
+    if (logoClickCount.current >= 3) {
+      logoClickCount.current = 0
+      setSecretMenuOpen(true)
+      toast.success('🔓 Secret Menu unlocked!', { duration: 2000 })
+    }
+  }
 
   const { openFromDeviceFSAccess, saveToDevice, saveAsToDevice, saveAllToDevice } = useFileOperations()
 
@@ -114,11 +133,11 @@ export function TopMenuBar() {
           <Menu className="h-5 w-5" />
         </button>
 
-        <div className="flex items-center gap-2 px-1 md:px-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--list-hover)]">
+        <div className="flex items-center gap-2 px-1 md:px-2" onClick={handleLogoClick}>
+          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--list-hover)] cursor-pointer select-none">
             <Code2 className="h-4 w-4 text-white" strokeWidth={2} />
           </div>
-          <span className="hidden text-xs font-bold tracking-tight sm:inline">ZCode Studio</span>
+          <span className="hidden text-xs font-bold tracking-tight sm:inline cursor-pointer select-none">ZCode Studio</span>
         </div>
       </div>
 
@@ -360,6 +379,7 @@ export function TopMenuBar() {
       <BugScanDialog open={scanOpen} onOpenChange={setScanOpen} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
       <ProjectManagerDialog open={projectManagerOpen} onOpenChange={setProjectManagerOpen} />
+      <SecretMenu open={secretMenuOpen} onClose={() => setSecretMenuOpen(false)} />
     </div>
   )
 }

@@ -71,6 +71,7 @@ interface EditorState {
   aiHelperOpen: boolean
   aiQuickCodeOpen: boolean
   apkEditorOpen: boolean
+  secretMenuOpen: boolean
 
   // File operations
   createFile: (name: string, parentId: string | null) => string
@@ -120,6 +121,7 @@ interface EditorState {
   setAiHelperOpen: (open: boolean) => void
   setAiQuickCodeOpen: (open: boolean) => void
   setApkEditorOpen: (open: boolean) => void
+  setSecretMenuOpen: (open: boolean) => void
 
   // === Source Control (real) ===
   // Track "saved" content per file — diff against current to detect modifications
@@ -766,6 +768,7 @@ export const useEditorStore = create<EditorState>()(
       aiHelperOpen: false,
       aiQuickCodeOpen: false,
       apkEditorOpen: false,
+      secretMenuOpen: false,
 
       // Source control initial state
       savedSnapshots: {},
@@ -1131,6 +1134,7 @@ export const useEditorStore = create<EditorState>()(
       setAiHelperOpen: (aiHelperOpen) => set({ aiHelperOpen }),
       setAiQuickCodeOpen: (aiQuickCodeOpen) => set({ aiQuickCodeOpen }),
       setApkEditorOpen: (apkEditorOpen) => set({ apkEditorOpen }),
+      setSecretMenuOpen: (secretMenuOpen) => set({ secretMenuOpen }),
 
       // === Source Control (real implementation) ===
       // savedSnapshots tracks the "last committed" content per file.

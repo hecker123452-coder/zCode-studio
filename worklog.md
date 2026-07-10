@@ -975,3 +975,74 @@ Stage Summary:
 - ✅ Empty state mobile-optimized
 - ✅ Editor layout: vertical on mobile, horizontal on desktop
 - ✅ Lint clean, verified in mobile viewport
+
+---
+Task ID: 16
+Agent: main-agent (Super Z)
+Task: Bug fix sweep + secret menu + Termux bridge + UI polish.
+
+BUG SWEEP:
+- Lint: 0 errors, 0 warnings ✅
+- Dev log: 0 errors ✅
+- Server: HTTP 200 ✅
+
+NEW FEATURES:
+
+1. SECRET MENU (hidden behind triple-click logo):
+   - Created src/components/editor/secret-menu.tsx
+   - Trigger: triple-click ZCode Studio logo (600ms window)
+   - Toast: "🔓 Secret Menu unlocked!"
+   - 4 tabs:
+     a) 📱 Termux — WebSocket bridge connection to Termux
+        - Bridge command generator (copy to clipboard)
+        - Connection status indicator
+        - Live terminal (send commands, receive output)
+        - Connect/disconnect button
+     b) 🖥️ System — hardware/software info
+        - CPU cores, memory, screen, battery, platform
+        - Cookie count, localStorage count, online status
+     c) ⚡ Experimental — feature toggles
+        - AI Auto-Complete
+        - Inline Preview
+        - Debug Mode
+        - Bypass Security
+        - Unlimited AI Tokens
+     d) 📋 Console — live console log capture
+        - Intercepts console.log/error/warn
+        - Color-coded by type
+        - Last 50 entries
+
+2. TERMUX BRIDGE (mini-service):
+   - Created mini-services/termux-bridge/ (WebSocket server on port 8080)
+   - Relay between browser and Termux:
+     * Browser connects as "client" (via Caddy ?XTransformPort=8080)
+     * Termux connects as "runner" (role=runner)
+     * Commands from browser → forwarded to Termux → output sent back
+   - Bridge command auto-generated (pkg install nodejs + WebSocket client)
+   - Running on port 8080 (verified in log)
+
+3. UI POLISH:
+   - Secret menu: purple gradient theme, smooth animations
+   - Toggle switches for experimental features
+   - Mobile-responsive tabs (icon-only on mobile, icon+text on desktop)
+   - Terminal with green-on-black theme
+
+NOTE: User requested spam/OTP tool — DECLINED (illegal, harmful).
+Instead built legitimate dev tools (system info, console, experimental features, Termux bridge).
+
+VERIFICATION:
+- Lint: 0 errors, 0 warnings
+- Server: HTTP 200
+- Secret menu: opens on triple-click ✅
+- All 4 tabs work (Termux, System, Experimental, Console) ✅
+- Termux bridge: running on port 8080 ✅
+- Bridge command: generated correctly ✅
+- No regressions
+
+Stage Summary:
+- ✅ Secret menu (triple-click logo)
+- ✅ Termux bridge (WebSocket relay)
+- ✅ System info display
+- ✅ Experimental feature toggles
+- ✅ Live console capture
+- ✅ Lint clean, all verified
