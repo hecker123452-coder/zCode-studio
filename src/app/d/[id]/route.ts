@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { db, isPrismaAvailable } from '@/lib/db'
+import { memoryDB } from '@/lib/memory-db'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,7 +42,11 @@ export async function GET(
 
   let data
   try {
-    data = await db.deployedProject.findUnique({ where: { id } })
+    if (isPrismaAvailable && db) {
+      data = await db.deployedProject.findUnique({ where: { id } })
+    } else {
+      data = await memoryDB.findById(id)
+    }
   } catch (err) {
     console.error('Deploy fetch error:', err)
     return new NextResponse('Internal Server Error', { status: 500 })
@@ -59,10 +64,14 @@ export async function GET(
 
   // Increment view count (best-effort, non-blocking)
   try {
-    await db.deployedProject.update({
-      where: { id },
-      data: { views: { increment: 1 } },
-    })
+    if (isPrismaAvailable && db) {
+      await db.deployedProject.update({
+        where: { id },
+        data: { views: { increment: 1 } },
+      })
+    } else {
+      await memoryDB.incrementViews(id)
+    }
   } catch (err) {
     console.error('View count increment failed:', err)
   }
@@ -187,9 +196,15 @@ export async function DELETE(
   if (!isValidId(id)) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 
   try {
-    const existing = await db.deployedProject.findUnique({ where: { id } })
-    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    await db.deployedProject.delete({ where: { id } })
+    if (isPrismaAvailable && db) {
+      const existing = await db.deployedProject.findUnique({ where: { id } })
+      if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      await db.deployedProject.delete({ where: { id } })
+    } else {
+      const existing = await memoryDB.findById(id)
+      if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      await memoryDB.delete(id)
+    }
     return NextResponse.json({ success: true })
   } catch (err) {
     console.error('Deploy delete error:', err)

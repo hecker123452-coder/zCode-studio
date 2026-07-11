@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { db, isPrismaAvailable } from '@/lib/db'
+import { memoryDB } from '@/lib/memory-db'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -124,26 +125,39 @@ export async function POST(req: NextRequest) {
     let attempts = 0
     while (attempts < 5) {
       const candidate = Array.from({ length: 8 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
-      const existing = await db.deployedProject.findUnique({ where: { id: candidate } })
-      if (!existing) { id = candidate; break }
+      if (isPrismaAvailable && db) {
+        const existing = await db.deployedProject.findUnique({ where: { id: candidate } })
+        if (!existing) { id = candidate; break }
+      } else {
+        const existing = await memoryDB.findById(candidate)
+        if (!existing) { id = candidate; break }
+      }
       attempts++
     }
     if (!id) {
-      // Extremely unlikely (8-char hex = 4 billion IDs), but handle gracefully
       return NextResponse.json({ error: 'Failed to generate unique ID, please retry' }, { status: 500 })
     }
 
     const now = new Date()
-    await db.deployedProject.create({
-      data: {
+    if (isPrismaAvailable && db) {
+      await db.deployedProject.create({
+        data: {
+          id,
+          html: sanitizedHtml,
+          fileName: safeFileName,
+          title: safeTitle,
+          views: 0,
+          createdAt: now,
+        },
+      })
+    } else {
+      await memoryDB.create({
         id,
         html: sanitizedHtml,
         fileName: safeFileName,
         title: safeTitle,
-        views: 0,
-        createdAt: now,
-      },
-    })
+      })
+    }
 
     // Build URL — prefer x-forwarded-host (set by gateway/proxy), fallback to host
     let baseUrl: string
@@ -172,10 +186,15 @@ export async function POST(req: NextRequest) {
 // GET - List deployed projects
 export async function GET() {
   try {
-    const projects = await db.deployedProject.findMany({
-      orderBy: { createdAt: 'desc' },
-      select: { id: true, fileName: true, title: true, createdAt: true, views: true, html: true },
-    })
+    let projects
+    if (isPrismaAvailable && db) {
+      projects = await db.deployedProject.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, fileName: true, title: true, createdAt: true, views: true, html: true },
+      })
+    } else {
+      projects = await memoryDB.findAll()
+    }
     // Map to the API shape (don't return full html in list — just size)
     const result = projects.map(p => ({
       id: p.id,
@@ -199,10 +218,15 @@ export async function DELETE(req: NextRequest) {
     const id = searchParams.get('id')
     if (!id || !isValidId(id)) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 
-    const existing = await db.deployedProject.findUnique({ where: { id } })
-    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
-    await db.deployedProject.delete({ where: { id } })
+    if (isPrismaAvailable && db) {
+      const existing = await db.deployedProject.findUnique({ where: { id } })
+      if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      await db.deployedProject.delete({ where: { id } })
+    } else {
+      const existing = await memoryDB.findById(id)
+      if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      await memoryDB.delete(id)
+    }
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Deploy delete error:', error)
