@@ -1,13 +1,8 @@
 {
   "framework": "nextjs",
   "buildCommand": "next build",
-  "installCommand": "npm install",
-  "functions": {
-    "src/app/api/ai/route.ts": {
-      "maxDuration": 300
-    },
-    "src/app/api/deploy/route.ts": {
-      "maxDuration": 60
-    }
+  "installCommand": "npm install --legacy-peer-deps",
+  "env": {
+    "DATABASE_URL": "file:./db/custom.db"
   }
 }

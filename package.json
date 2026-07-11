@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "DATABASE_URL=file:./db/custom.db next build",
-    "postinstall": "DATABASE_URL=file:./db/custom.db prisma generate || echo 'prisma generate skipped'",
+    "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint .",
     "test": "bun scripts/test-indocode.ts && bun scripts/test-html-indocode.ts && bun scripts/test-user-snake.ts && bun scripts/test-audit-fixes.ts",
