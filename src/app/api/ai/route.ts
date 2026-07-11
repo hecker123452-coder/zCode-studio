@@ -4,7 +4,7 @@ import { buildSystemPrompt, shouldSearchWeb, type ProjectContext } from '@/lib/a
 import { runAgentLoop } from '@/lib/ai/agent-loop'
 
 export const runtime = 'nodejs'
-export const maxDuration = 600 // 10 min — multi-step agent needs lots of time
+export const maxDuration = 60 // Vercel hobby plan max is 60s
 
 /**
  * === UPGRADED AI API — Claude 3.5-tier multi-step agent ===
