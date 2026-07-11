@@ -68,7 +68,7 @@ export function AiCodeHelper() {
     if (!open || !activeFile) return
     const items = analyze(activeFile.content || '', activeFile.language || 'plaintext')
     queueMicrotask(() => setAnalysis(items))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [activeFile?.id, activeFile?.content, activeFile?.language, open, analyze])
 
   const reAnalyze = () => {

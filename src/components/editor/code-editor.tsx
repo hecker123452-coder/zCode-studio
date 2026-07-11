@@ -257,7 +257,7 @@ export function CodeEditor({
     if (activeFile) {
       onLanguageChange?.(activeFile.language || 'plaintext')
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [activeFile?.id, activeFile?.language, onLanguageChange])
 
   if (!activeFile) {

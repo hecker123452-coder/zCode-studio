@@ -319,7 +319,7 @@ export default function Home() {
     if (showPreviewMobile && activeFile && activeFile.language !== 'html' && activeFile.language !== 'xml' && activeFile.language !== 'indocode') {
       setShowPreviewMobile(false)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [activeFile?.id, activeFile?.language, showPreviewMobile, setShowPreviewMobile])
 
   const handleCursorChange = useCallback((pos: { line: number; column: number }) => {

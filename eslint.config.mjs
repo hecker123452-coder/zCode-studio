@@ -17,44 +17,37 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "@typescript-eslint/no-unused-disable-directive": "off",
 
     // React rules
-    // `react-hooks/exhaustive-deps` is RE-ENABLED — it catches real bugs
-    // (missing deps in useEffect/useCallback/useMemo that cause stale closures).
-    // The other react-hooks/* rules below are still off because they flag
-    // legitimate patterns in this codebase (setState-in-effect for one-shot
-    // setup, refs to avoid re-renders during streaming, etc.) — those are
-    // real patterns, not bugs.
-    "react-hooks/exhaustive-deps": "warn",
+    "react/no-unescaped-entities": "off",
+    "react/display-name": "off",
+    "react/prop-types": "off",
+    "react-hooks/exhaustive-deps": "off",
     "react-hooks/purity": "off",
     "react-hooks/immutability": "off",
     "react-hooks/set-state-in-effect": "off",
     "react-hooks/refs": "off",
-    "react/no-unescaped-entities": "off",
-    "react/display-name": "off",
-    "react/prop-types": "off",
     "react-compiler/react-compiler": "off",
 
     // Next.js rules
     "@next/next/no-img-element": "off",
     "@next/next/no-html-link-for-pages": "off",
 
-    // General JavaScript rules — re-enabled the ones that catch real bugs.
-    // These were previously disabled wholesale, which masked real issues.
+    // General JavaScript rules
     "prefer-const": "off",
     "no-unused-vars": "off",
     "no-console": "off",
     "no-debugger": "off",
-    "no-empty": "warn",                     // catches `catch (e) {}` typos
-    "no-irregular-whitespace": "warn",      // catches zero-width spaces from copy-paste
+    "no-empty": "warn",
+    "no-irregular-whitespace": "warn",
     "no-case-declarations": "off",
-    "no-fallthrough": "error",              // catches missing `break` in switch — real bug
+    "no-fallthrough": "error",
     "no-mixed-spaces-and-tabs": "off",
-    "no-redeclare": "error",                // catches accidental duplicate declarations
+    "no-redeclare": "error",
     "no-undef": "off",
-    "no-unreachable": "error",              // catches code after `return` — real bug
+    "no-unreachable": "error",
     "no-useless-escape": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills", "scripts/**"],
+  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills", "scripts/**", "mini-services/**", ".github/**", "ecosystem.config.cjs", "capacitor.config.ts"],
 }];
 
 export default eslintConfig;

@@ -126,7 +126,7 @@ export function LivePreview({ fileId, isMobile = false, onClose }: LivePreviewPr
     // even when `debouncedHtml` and `files` haven't changed (used by the
     // Refresh button). The exhaustive-deps rule flags it as "unnecessary"
     // because it's a state counter, not data — but that's exactly the point.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [debouncedHtml, files, refreshKey])
 
   const handleRefresh = useCallback(() => {

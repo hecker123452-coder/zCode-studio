@@ -1,7 +1,7 @@
 {
   "name": "ZCode Studio - Code Editor",
   "short_name": "ZCode",
-  "description": "Web-based code editor with AI assistant, APK editor, and IndoCode support",
+  "description": "Web-based code editor with AI assistant, APK editor, IndoCode support, and more",
   "start_url": "/",
   "display": "standalone",
   "orientation": "any",
@@ -12,15 +12,33 @@
   "categories": ["productivity", "developer", "utilities"],
   "icons": [
     {
-      "src": "/logo.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/logo.svg",
-      "sizes": "192x192 512x512",
-      "type": "image/svg+xml",
+      "src": "/icon-256.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "maskable"
     }
   ],
@@ -41,5 +59,6 @@
       "url": "/?action=ai"
     }
   ],
-  "display_override": ["standalone", "fullscreen", "minimal-ui"]
+  "display_override": ["standalone", "fullscreen", "minimal-ui"],
+  "prefer_related_applications": false
 }

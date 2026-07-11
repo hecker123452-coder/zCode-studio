@@ -352,7 +352,7 @@ export function BugScanDialog({ open, onOpenChange }: { open: boolean; onOpenCha
     // (it doesn't depend on any reactive state itself — only on its args).
     // We intentionally exclude it from deps to avoid re-creating runScan on
     // every render, which would re-trigger the auto-scan useEffect below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [mode, activeFile, selectedFileIds, uploadedFile])
 
   useEffect(() => {

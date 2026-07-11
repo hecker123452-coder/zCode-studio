@@ -52,7 +52,7 @@ export function SourceControlPanel() {
   const commits = useEditorStore(s => s.commits)
 
   // Recompute modified files whenever files change
-  const modifiedFiles: ModifiedFile[] = useMemo(() => getModifiedFiles(), [files]) // eslint-disable-line react-hooks/exhaustive-deps
+  const modifiedFiles: ModifiedFile[] = useMemo(() => getModifiedFiles(), [files])  
 
   const staged = modifiedFiles.filter(f => stagedFileIds.includes(f.fileId))
   const unstaged = modifiedFiles.filter(f => !stagedFileIds.includes(f.fileId))
